@@ -6,7 +6,7 @@
 
 use gio::Settings;
 use gtk::gio::SettingsBindFlags;
-use gtk::{glib, prelude::*, subclass::prelude::*, CompositeTemplate, *};
+use gtk::{CompositeTemplate, glib, prelude::*, subclass::prelude::*, *};
 use once_cell::sync::OnceCell;
 
 glib::wrapper! {
@@ -114,6 +114,8 @@ mod imp {
         pub cache_clear: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub desktop_lyrics: TemplateChild<Switch>,
+        #[template_child]
+        pub download_settings: TemplateChild<Button>,
     }
 
     #[glib::object_subclass]
@@ -138,6 +140,22 @@ mod imp {
 
             obj.setup_settings();
             obj.bind_settings();
+            let weak = obj.downgrade();
+            self.download_settings.connect_clicked(move |_| {
+                if let Some(parent) = weak.upgrade() {
+                    use netease_cloud_music_gtk4::download_dialog::{
+                        DownloadDialog, load_preferences, save_preferences,
+                    };
+                    let settings = parent.settings().clone();
+                    let dialog = DownloadDialog::new(load_preferences(&settings), 0, None);
+                    dialog.connect_save(move |prefs| {
+                        if let Err(e) = save_preferences(&settings, &prefs) {
+                            log::warn!("Download settings: {e}");
+                        }
+                    });
+                    dialog.present_for(&parent);
+                }
+            });
         }
     }
     impl WidgetImpl for NeteaseCloudMusicGtk4Preferences {}

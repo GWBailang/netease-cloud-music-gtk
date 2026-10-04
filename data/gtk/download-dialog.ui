@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.14"/>
+  <object class="AdwDialog" id="download_dialog">
+    <property name="content-width">520</property>
+    <property name="content-height">660</property>
+    <property name="title" translatable="yes">Download songs</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top"><object class="AdwHeaderBar"><property name="title-widget"><object class="AdwWindowTitle" id="heading"><property name="title" translatable="yes">Download songs</property></object></property></object></child>
+        <property name="content"><object class="AdwPreferencesPage">
+          <child><object class="AdwPreferencesGroup"><property name="title" translatable="yes">Save files</property>
+            <child><object class="AdwActionRow" id="location"><property name="title" translatable="yes">Save location</property><property name="subtitle-lines">2</property><child type="suffix"><object class="GtkButton" id="choose_folder"><property name="icon-name">folder-open-symbolic</property><property name="valign">center</property><property name="tooltip-text" translatable="yes">Choose folder</property><style><class name="flat"/></style></object></child></object></child>
+            <child><object class="AdwComboRow" id="content"><property name="title" translatable="yes">Download content</property><property name="model"><object class="GtkStringList"><items><item translatable="yes">Audio and lyrics</item><item translatable="yes">Audio only</item><item translatable="yes">Lyrics only</item></items></object></property></object></child>
+            <child><object class="AdwComboRow" id="bitrate"><property name="title" translatable="yes">MP3 bitrate</property><property name="subtitle" translatable="yes">Fixed bitrate, 44.1 kHz, stereo</property><property name="model"><object class="GtkStringList"><items><item>128 kbps</item><item>192 kbps</item><item>320 kbps</item></items></object></property></object></child>
+          </object></child>
+          <child><object class="AdwPreferencesGroup" id="lyrics_group"><property name="title" translatable="yes">Lyrics</property>
+            <child><object class="AdwActionRow"><property name="title" translatable="yes">Lyric formats</property><child type="suffix"><object class="GtkBox"><property name="spacing">12</property><child><object class="GtkCheckButton" id="lrc"><property name="label">LRC</property></object></child><child><object class="GtkCheckButton" id="txt"><property name="label">TXT</property></object></child><child><object class="GtkCheckButton" id="srt"><property name="label">SRT</property></object></child></object></child></object></child>
+            <child><object class="AdwComboRow" id="lyric_mode"><property name="title" translatable="yes">Lyric content</property><property name="model"><object class="GtkStringList"><items><item translatable="yes">Original</item><item translatable="yes">Original and separate translation</item><item translatable="yes">Bilingual</item></items></object></property></object></child>
+            <child><object class="AdwComboRow" id="encoding"><property name="title" translatable="yes">Text encoding</property><property name="model"><object class="GtkStringList"><items><item>UTF-8</item><item>GBK</item></items></object></property></object></child>
+          </object></child>
+          <child><object class="AdwPreferencesGroup" id="batch_group"><property name="title" translatable="yes">Batch downloads</property>
+            <child><object class="AdwSwitchRow" id="collection_folder"><property name="title" translatable="yes">Create a playlist folder</property></object></child>
+            <child><object class="AdwSwitchRow" id="numbered"><property name="title" translatable="yes">Number filenames in playlist order</property></object></child>
+          </object></child>
+          <child><object class="AdwPreferencesGroup"><child><object class="GtkLabel" id="space"><property name="wrap">true</property><property name="xalign">0</property><style><class name="dim-label"/></style></object></child><child><object class="GtkLabel" id="error"><property name="visible">false</property><property name="wrap">true</property><property name="xalign">0</property><style><class name="error"/></style></object></child></object></child>
+        </object></property>
+        <child type="bottom"><object class="GtkBox"><property name="margin-start">20</property><property name="margin-end">20</property><property name="margin-top">12</property><property name="margin-bottom">16</property><child><object class="GtkButton" id="submit"><property name="label" translatable="yes">Add to download queue</property><property name="hexpand">true</property><style><class name="suggested-action"/><class name="pill"/></style></object></child></object></child>
+      </object>
+    </property>
+  </object>
+</interface>

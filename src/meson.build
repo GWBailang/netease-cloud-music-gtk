@@ -21,6 +21,18 @@ run_command(
 )
 
 rust_sources = files(
+  'lib.rs',
+  'download/mod.rs',
+  'download/model.rs',
+  'download/naming.rs',
+  'download/lyrics.rs',
+  'download/api.rs',
+  'download/storage.rs',
+  'download/catalog.rs',
+  'download/audio.rs',
+  'download/manager.rs',
+  'download/worker.rs',
+  'gui/download_dialog.rs',
   'application.rs',
   'config.rs',
   'main.rs',

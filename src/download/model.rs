@@ -61,6 +61,10 @@ pub struct TargetLocation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadPreferences {
     pub target_path: PathBuf,
+    #[serde(default)]
+    pub target_removable: bool,
+    #[serde(default)]
+    pub target_uuid: Option<String>,
     pub bitrate: u32,
     pub content: DownloadContent,
     pub lyric_formats: Vec<LyricFormat>,
@@ -75,6 +79,8 @@ impl Default for DownloadPreferences {
             .unwrap_or_else(|| gtk::glib::home_dir().join("Music"));
         Self {
             target_path: music.join("NetEase Downloads"),
+            target_removable: false,
+            target_uuid: None,
             bitrate: 192,
             content: DownloadContent::AudioAndLyrics,
             lyric_formats: vec![LyricFormat::Lrc],

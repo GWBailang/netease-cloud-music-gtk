@@ -5,7 +5,8 @@
         <property name="title" translatable="yes">Preferences</property>
         <child>
             <object class="AdwPreferencesPage">
-                <child>
+                <child><object class="AdwPreferencesGroup"><property name="title" translatable="yes">Downloads</property><child><object class="AdwActionRow"><property name="title" translatable="yes">Download defaults</property><property name="subtitle" translatable="yes">Save folder, MP3 quality and lyrics</property><child type="suffix"><object class="GtkButton" id="download_settings"><property name="icon-name">document-save-symbolic</property><property name="valign">center</property><property name="tooltip-text" translatable="yes">Download defaults</property></object></child></object></child></object></child>
+<child>
                     <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">General</property>
                         <child>

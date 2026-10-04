@@ -35,3 +35,5 @@ pub use system_tray::*;
 pub use theme_selector::*;
 pub use toplist::*;
 pub use user_menus::*;
+
+pub use netease_cloud_music_gtk4::download_dialog::DownloadDialog;
