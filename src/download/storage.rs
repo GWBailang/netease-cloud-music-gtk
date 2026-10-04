@@ -279,11 +279,25 @@ fn scan_dir(target: &TargetLocation, relative: &Path, result: &mut Vec<SavedSong
                 });
             }
         }
+        let title = id3::Tag::read_from_path(target.root.join(&path))
+            .ok()
+            .and_then(|tag| {
+                use id3::TagLike;
+                let title = tag.title()?.trim();
+                if title.is_empty() {
+                    return None;
+                }
+                Some(match tag.artist().filter(|s| !s.trim().is_empty()) {
+                    Some(artist) => format!("{artist} - {title}"),
+                    None => title.to_owned(),
+                })
+            })
+            .unwrap_or(stem);
         result.push(SavedSong {
             key: format!("{}:{}", target.id, path.display()),
             location: target.clone(),
             song: None,
-            title: stem,
+            title,
             bitrate: 0,
             encoding: TextEncoding::Utf8,
             lyric_mode: LyricMode::Original,
