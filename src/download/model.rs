@@ -262,6 +262,7 @@ pub struct ManagerSnapshot {
 }
 #[derive(Debug, Clone)]
 pub enum DownloadEvent {
+    Task(TaskRecord),
     Changed(ManagerSnapshot),
     LocationInvalid(LocationId),
     Error(String),

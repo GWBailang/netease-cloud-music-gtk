@@ -2,6 +2,8 @@ pub mod api;
 pub mod audio;
 pub mod catalog;
 pub mod lyrics;
+pub mod manager;
 pub mod model;
 pub mod naming;
 pub mod storage;
+pub mod worker;
