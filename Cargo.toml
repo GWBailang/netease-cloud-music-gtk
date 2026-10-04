@@ -25,6 +25,7 @@ ksni = "~0.2"
 serde = { version = "~1.0", features = ["derive"] }
 serde_json = "~1.0"
 encoding_rs = "0.8"
+futures-lite = "2"
 
 [dependencies.adw]
 package = "libadwaita"
@@ -35,3 +36,6 @@ features = ["v1_6"]
 [package.metadata.bundle]
 icon = ["data/icons/hicolor/512x512@2x.png"]
 osx_minimum_system_version = "11.0"
+
+[patch."https://github.com/gmg137/netease-cloud-music-api.git"]
+netease-cloud-music-api = { path = "vendor/netease-cloud-music-api" }

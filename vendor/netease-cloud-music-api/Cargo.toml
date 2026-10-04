@@ -1,0 +1,25 @@
+[package]
+name = "netease-cloud-music-api"
+version = "2.2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+isahc = { version = "^2", features = ["cookies"] }
+lazy_static = "*"
+regex = "*"
+urlqstring = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+rand = "~0.9"
+openssl = "*"
+anyhow = "*"
+futures-lite = "2"
+async-io = "2"
+hex = "*"
+base64 = "*"
+flate2 = "*"
+
+[dev-dependencies]
+async-std = { features = ["attributes"], version = "*" }
