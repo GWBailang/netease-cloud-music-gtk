@@ -39,6 +39,15 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     assert_eq!(prefs.bitrate, 192);
     assert_eq!(prefs.lyric_formats, vec![LyricFormat::Lrc]);
     let dialog = DownloadDialog::new(prefs.clone(), 1, None);
+    dialog.set_total_duration(10000);
+    assert!(
+        dialog
+            .builder
+            .object::<gtk::Label>("estimate")
+            .unwrap()
+            .text()
+            .contains("0.2 MB")
+    );
     let content = dialog.builder.object::<adw::ComboRow>("content").unwrap();
     content.set_selected(2);
     for id in ["lrc", "txt", "srt"] {
@@ -66,12 +75,20 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     assert_eq!(prefs.bitrate, 192);
     save_preferences(&settings, &selected).unwrap();
     assert_eq!(load_preferences(&settings).content, DownloadContent::Lyrics);
-    let (manager, _events) = netease_cloud_music_gtk4::download::manager::DownloadManager::new(
-        temp.0.join("catalog"),
-        temp.0.join("cache"),
-    )
-    .unwrap();
+    let (manager, _events) =
+        netease_cloud_music_gtk4::download::manager::DownloadManager::new_with_backend(
+            temp.0.join("catalog"),
+            temp.0.join("cache"),
+            std::sync::Arc::new(UiBackend),
+        )
+        .unwrap();
     let page = netease_cloud_music_gtk4::downloads_page::DownloadsPage::new(manager.clone());
+    assert!(
+        page.builder
+            .object::<adw::StatusPage>("tasks_empty")
+            .unwrap()
+            .is_visible()
+    );
     assert_eq!(
         page.builder
             .object::<gtk::Stack>("views")
@@ -150,9 +167,85 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     spin(350);
     screenshot(&window, "download-dialog-dark-small");
     visual.dialog.close();
+    spin(200);
+    let locale_dir = temp.0.join("locale");
+    let messages = locale_dir.join("zh_CN/LC_MESSAGES");
+    std::fs::create_dir_all(&messages).unwrap();
+    assert!(
+        std::process::Command::new("msgfmt")
+            .arg(source.parent().unwrap().join("po/zh_CN.po"))
+            .arg("-o")
+            .arg(messages.join("netease-cloud-music-gtk4.mo"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    gettextrs::bindtextdomain("netease-cloud-music-gtk4", &locale_dir).unwrap();
+    gettextrs::textdomain("netease-cloud-music-gtk4").unwrap();
+    gettextrs::setlocale(gettextrs::LocaleCategory::LcAll, "zh_CN.UTF-8").unwrap();
+    let chinese = DownloadDialog::new(DownloadPreferences::default(), 2, None);
+    assert_eq!(
+        chinese
+            .builder
+            .object::<gtk::Button>("submit")
+            .unwrap()
+            .label()
+            .as_deref(),
+        Some("加入下载队列")
+    );
+    chinese.set_total_duration(20000);
+    chinese.present_for(&window);
+    spin(300);
+    screenshot(&window, "download-dialog-zh");
+    chinese.dialog.close();
     window.close();
+    let target = TargetLocation::capture(&target_path, false, None, None).unwrap();
+    let mut queue_prefs = DownloadPreferences::default();
+    queue_prefs.content = DownloadContent::Lyrics;
+    let options = queue_prefs.with_target(target).unwrap();
+    manager
+        .enqueue(
+            vec![common::song(77)],
+            options.clone(),
+            None,
+            ncm_api::MusicApi::new(2),
+        )
+        .unwrap();
+    page.apply_event(DownloadEvent::Changed(manager.snapshot()));
+    let task_row = page
+        .builder
+        .object::<gtk::ListBox>("tasks")
+        .unwrap()
+        .first_child()
+        .unwrap();
+    spin(300);
+    page.apply_event(DownloadEvent::Changed(manager.snapshot()));
+    assert_eq!(
+        page.builder
+            .object::<gtk::ListBox>("tasks")
+            .unwrap()
+            .first_child()
+            .unwrap(),
+        task_row
+    );
+    manager
+        .enqueue(
+            vec![common::song(78)],
+            options,
+            None,
+            ncm_api::MusicApi::new(2),
+        )
+        .unwrap();
+    window.set_content(None::<&gtk::Widget>);
     drop(page);
-    assert!(manager.snapshot().tasks.is_empty());
+    spin(300);
+    assert!(
+        manager
+            .snapshot()
+            .tasks
+            .iter()
+            .all(|t| t.stage == TaskStage::Complete)
+    );
     manager.shutdown();
 }
 
@@ -190,4 +283,27 @@ fn screenshot(window: &adw::Window, name: &str) {
     texture
         .save_to_png(dir.join(format!("{name}.png")))
         .unwrap();
+}
+
+struct UiBackend;
+impl netease_cloud_music_gtk4::download::worker::DownloadBackend for UiBackend {
+    fn run(
+        &self,
+        task: &TaskRecord,
+        _: &ncm_api::MusicApi,
+        temp: &std::path::Path,
+        _: &std::sync::atomic::AtomicBool,
+        _: &dyn Fn(TaskStage, f64),
+        _: &std::sync::Mutex<()>,
+    ) -> anyhow::Result<Vec<netease_cloud_music_gtk4::download::worker::PreparedOutput>> {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let path = temp.join("lyrics.lrc");
+        std::fs::write(&path, b"[00:01.00]lyrics")?;
+        Ok(vec![
+            netease_cloud_music_gtk4::download::worker::PreparedOutput::ready(
+                &task.outputs[0].suffix,
+                path,
+            ),
+        ])
+    }
 }

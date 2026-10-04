@@ -191,9 +191,7 @@ impl NcmClient {
     }
 
     pub async fn songs_url(&self, ids: &[u64], rate: u32) -> Result<Vec<SongUrl>> {
-        self.client
-            .songs_url_v1(ids, Self::get_quality(rate))
-            .await
+        self.client.songs_url_v1(ids, Self::get_quality(rate)).await
     }
 
     pub async fn get_lyrics(&self, si: SongInfo) -> Result<Vec<(u64, String)>> {

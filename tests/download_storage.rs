@@ -6,6 +6,7 @@ fn location(temp: &common::TempDir) -> TargetLocation {
 }
 fn saved(target: TargetLocation, file: StoredFile) -> SavedSong {
     SavedSong {
+        state: SavedState::Available,
         key: "song".into(),
         location: target,
         song: Some(common::song(1)),

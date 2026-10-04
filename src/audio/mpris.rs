@@ -6,16 +6,16 @@
 
 use adw::prelude::GtkWindowExt;
 use glib::clone;
-use gtk::prelude::Cast;
 use gtk::glib;
-use mpris_server::{zbus::Result, Time, TrackId, *};
+use gtk::prelude::Cast;
+use mpris_server::{Time, TrackId, zbus::Result, *};
 
 use ncm_api::SongInfo;
 use std::rc::Rc;
 
+use crate::application::NeteaseCloudMusicGtk4Application;
 use crate::gui::PlayerControls;
 use crate::window::NeteaseCloudMusicGtk4Window;
-use crate::application::NeteaseCloudMusicGtk4Application;
 
 use super::LoopsState;
 

@@ -1,5 +1,5 @@
 data/com.gitee.gmg137.NeteaseCloudMusicGtk4.desktop.in
-data/com.gitee.gmg137.NeteaseCloudMusicGtk4.appdata.xml.in
+data/com.gitee.gmg137.NeteaseCloudMusicGtk4.metainfo.xml.in
 data/com.gitee.gmg137.NeteaseCloudMusicGtk4.gschema.xml
 data/gtk/window.ui
 data/gtk/preferences.ui
@@ -15,3 +15,14 @@ data/gtk/my-page.ui
 data/gtk/playlist-lyrics-page.ui
 src/gui/songlist_page.rs
 src/gui/system_tray.rs
+
+data/gtk/download-dialog.ui
+data/gtk/downloads-page.ui
+data/gtk/songlist-view.ui
+src/application.rs
+src/gui/download_dialog.rs
+src/gui/downloads_page.rs
+src/gui/songlist_row.rs
+src/gui/songlist_view.rs
+src/gui/player_controls.rs
+src/gui/preferences.rs

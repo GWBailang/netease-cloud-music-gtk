@@ -3,7 +3,11 @@ use adw::prelude::*;
 use anyhow::{Result, ensure};
 use gettextrs::gettext;
 use gtk::{gio, glib};
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    path::Path,
+    rc::Rc,
+};
 type Submit = Box<dyn Fn(DownloadOptions)>;
 type Save = Box<dyn Fn(DownloadPreferences)>;
 struct Data {
@@ -11,6 +15,7 @@ struct Data {
     submit: RefCell<Vec<Submit>>,
     save: RefCell<Vec<Save>>,
     count: usize,
+    duration: Cell<u64>,
 }
 #[derive(Clone)]
 pub struct DownloadDialog {
@@ -67,7 +72,7 @@ pub fn capture_folder(
     let mount = file.find_enclosing_mount(None::<&gio::Cancellable>).ok();
     let removable = removable_hint
         || mount.as_ref().is_some_and(|m| {
-            m.can_eject()
+            (m.can_eject() || m.can_unmount())
                 || m.volume()
                     .and_then(|v| v.drive())
                     .is_some_and(|d| d.is_removable() || d.is_media_removable())
@@ -98,7 +103,7 @@ impl DownloadDialog {
     pub fn new(
         initial: DownloadPreferences,
         count: usize,
-        _collection: Option<CollectionSnapshot>,
+        collection: Option<CollectionSnapshot>,
     ) -> Self {
         let builder = gtk::Builder::new();
         builder.set_translation_domain(Some("netease-cloud-music-gtk4"));
@@ -111,6 +116,7 @@ impl DownloadDialog {
             submit: RefCell::new(vec![]),
             save: RefCell::new(vec![]),
             count,
+            duration: Cell::new(0),
         });
         object::<adw::ComboRow>(&dialog, "content").set_selected(match initial.content {
             DownloadContent::AudioAndLyrics => 0,
@@ -157,11 +163,31 @@ impl DownloadDialog {
             object::<adw::WindowTitle>(&dialog, "heading").set_title(&gettext("Download defaults"));
             object::<gtk::Button>(&dialog, "submit").set_label(&gettext("Save"));
         }
+        if let Some(collection) = collection {
+            if collection.duplicates > 0 {
+                object::<adw::WindowTitle>(&dialog, "heading").set_subtitle(&format!(
+                    "{} {} · {} {}",
+                    count,
+                    gettext("songs"),
+                    collection.duplicates,
+                    gettext("duplicates removed")
+                ));
+            }
+        }
+        let weak = dialog.downgrade();
+        let shared = data.clone();
+        object::<adw::ComboRow>(&dialog, "bitrate").connect_selected_notify(move |_| {
+            if let Some(dialog) = weak.upgrade() {
+                update_estimate(&dialog, &shared);
+            }
+        });
         update_visibility(&dialog);
         let weak = dialog.downgrade();
+        let shared = data.clone();
         object::<adw::ComboRow>(&dialog, "content").connect_selected_notify(move |_| {
             if let Some(dialog) = weak.upgrade() {
                 update_visibility(&dialog);
+                update_estimate(&dialog, &shared);
             }
         });
         let weak = dialog.downgrade();
@@ -183,7 +209,7 @@ impl DownloadDialog {
                             .find_enclosing_mount(None::<&gio::Cancellable>)
                             .ok()
                             .is_some_and(|m| {
-                                m.can_eject()
+                                (m.can_eject() || m.can_unmount())
                                     || m.volume()
                                         .and_then(|v| v.drive())
                                         .is_some_and(|d| d.is_removable() || d.is_media_removable())
@@ -211,6 +237,10 @@ impl DownloadDialog {
             builder,
             data,
         }
+    }
+    pub fn set_total_duration(&self, ms: u64) {
+        self.data.duration.set(ms);
+        update_estimate(&self.dialog, &self.data);
     }
     pub fn read_preferences(&self) -> Result<DownloadPreferences> {
         read_preferences(&self.dialog, &self.data)
@@ -340,4 +370,19 @@ fn show_error(dialog: &adw::Dialog, message: &str) {
     let label = object::<gtk::Label>(dialog, "error");
     label.set_label(&gettext(message));
     label.set_visible(true);
+}
+
+fn update_estimate(dialog: &adw::Dialog, data: &Data) {
+    let bitrate =
+        [128, 192, 320][object::<adw::ComboRow>(dialog, "bitrate").selected().min(2) as usize];
+    let label = object::<gtk::Label>(dialog, "estimate");
+    label.set_visible(
+        data.duration.get() > 0 && object::<adw::ComboRow>(dialog, "content").selected() != 2,
+    );
+    label.set_label(&format!(
+        "{}: {:.1} MB · {}",
+        gettext("Estimated MP3 size"),
+        data.duration.get() as f64 * bitrate as f64 / 8e6,
+        gettext("Excludes lyrics, tags and temporary files")
+    ));
 }

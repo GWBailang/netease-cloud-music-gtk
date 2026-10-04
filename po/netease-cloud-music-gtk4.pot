@@ -587,3 +587,408 @@ msgstr ""
 #: src/gui/songlist_page.rs
 msgid "Switch to newest first"
 msgstr ""
+
+msgid "Downloads"
+msgstr ""
+
+msgid "Download defaults"
+msgstr ""
+
+msgid "Save folder, MP3 quality and lyrics"
+msgstr ""
+
+msgid "Download songs"
+msgstr ""
+
+msgid "Save files"
+msgstr ""
+
+msgid "Save location"
+msgstr ""
+
+msgid "Choose folder"
+msgstr ""
+
+msgid "Choose save folder"
+msgstr ""
+
+msgid "Download content"
+msgstr ""
+
+msgid "Audio and lyrics"
+msgstr ""
+
+msgid "Audio only"
+msgstr ""
+
+msgid "Lyrics only"
+msgstr ""
+
+msgid "MP3 bitrate"
+msgstr ""
+
+msgid "Fixed bitrate, 44.1 kHz, stereo"
+msgstr ""
+
+msgid "Lyric formats"
+msgstr ""
+
+msgid "Lyric content"
+msgstr ""
+
+msgid "Original"
+msgstr ""
+
+msgid "Original and separate translation"
+msgstr ""
+
+msgid "Bilingual"
+msgstr ""
+
+msgid "Text encoding"
+msgstr ""
+
+msgid "Batch downloads"
+msgstr ""
+
+msgid "Create a playlist folder"
+msgstr ""
+
+msgid "Number filenames in playlist order"
+msgstr ""
+
+msgid "Add to download queue"
+msgstr ""
+
+msgid "Available space"
+msgstr ""
+
+msgid "Estimated MP3 size"
+msgstr ""
+
+msgid "Excludes lyrics, tags and temporary files"
+msgstr ""
+
+msgid "duplicates removed"
+msgstr ""
+
+msgid "songs"
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "Download queue"
+msgstr ""
+
+msgid "Saved files"
+msgstr ""
+
+msgid "Clear finished history"
+msgstr ""
+
+msgid "Search songs or folders"
+msgstr ""
+
+msgid "Scan folder"
+msgstr ""
+
+msgid "Select visible"
+msgstr ""
+
+msgid "Delete selected"
+msgstr ""
+
+msgid "Remove missing entries"
+msgstr ""
+
+msgid "All save locations"
+msgstr ""
+
+msgid "selected"
+msgstr ""
+
+msgid "Downloaded"
+msgstr ""
+
+msgid "Imported"
+msgstr ""
+
+msgid "Import"
+msgstr ""
+
+msgid "Import existing files?"
+msgstr ""
+
+msgid "Scan folder for existing MP3 files"
+msgstr ""
+
+msgid "No MP3 files found"
+msgstr ""
+
+msgid "Files imported"
+msgstr ""
+
+msgid "Finished history cleared; saved files are retained"
+msgstr ""
+
+msgid "Missing entries removed"
+msgstr ""
+
+msgid "Refresh file status"
+msgstr ""
+
+msgid "File status refreshed"
+msgstr ""
+
+msgid "Missing files"
+msgstr ""
+
+msgid "Files changed"
+msgstr ""
+
+msgid "Location unavailable"
+msgstr ""
+
+msgid "Available"
+msgstr ""
+
+msgid "Active"
+msgstr ""
+
+msgid "Source audio"
+msgstr ""
+
+msgid "Download song"
+msgstr ""
+
+msgid "Download current song"
+msgstr ""
+
+msgid "Download all songs"
+msgstr ""
+
+msgid "Select song"
+msgstr ""
+
+msgid "Select songs"
+msgstr ""
+
+msgid "Cancel selection"
+msgstr ""
+
+msgid "Select all loaded songs"
+msgstr ""
+
+msgid "Only songs currently loaded in this view are selected"
+msgstr ""
+
+msgid "Download selected"
+msgstr ""
+
+msgid "Pending"
+msgstr ""
+
+msgid "Saved"
+msgstr ""
+
+msgid "Already saved"
+msgstr ""
+
+msgid "Unavailable"
+msgstr ""
+
+msgid "Failed"
+msgstr ""
+
+msgid "Waiting"
+msgstr ""
+
+msgid "Fetching resources"
+msgstr ""
+
+msgid "Downloading"
+msgstr ""
+
+msgid "Converting"
+msgstr ""
+
+msgid "Saving"
+msgstr ""
+
+msgid "Complete"
+msgstr ""
+
+msgid "Cancelled"
+msgstr ""
+
+msgid "Interrupted"
+msgstr ""
+
+msgid "Unknown song"
+msgstr ""
+
+msgid "Retry"
+msgstr ""
+
+msgid "Retry as UTF-8"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Download cancelled"
+msgstr ""
+
+msgid "Storage device disconnected; choose its folder again before retrying"
+msgstr ""
+
+msgid "Download manager is unavailable"
+msgstr ""
+
+msgid "Loading all playlist songs…"
+msgstr ""
+
+msgid "Unable to load playlist"
+msgstr ""
+
+msgid "No songs to download"
+msgstr ""
+
+msgid "Added to download queue"
+msgstr ""
+
+msgid "Choose the storage folder again"
+msgstr ""
+
+msgid "Select files first"
+msgstr ""
+
+msgid "Delete saved files"
+msgstr ""
+
+msgid "Choose which files to include. The next step shows the exact files."
+msgstr ""
+
+msgid "MP3 audio"
+msgstr ""
+
+msgid "Preview files"
+msgstr ""
+
+msgid "No matching files"
+msgstr ""
+
+msgid "Confirm file deletion"
+msgstr ""
+
+msgid "Only these files will be removed. Other locations and the online playlist are retained. Moving to Trash may not free space on this device."
+msgstr ""
+
+msgid "files"
+msgstr ""
+
+msgid "Move to Trash"
+msgstr ""
+
+msgid "Delete permanently"
+msgstr ""
+
+msgid "Files deleted"
+msgstr ""
+
+msgid "These files were retained. Trash failures require a separate permanent-delete confirmation."
+msgstr ""
+
+msgid "Choose at least one lyric format"
+msgstr ""
+
+msgid "Choose a save folder"
+msgstr ""
+
+msgid "Save location is unavailable; choose the mounted folder again"
+msgstr ""
+
+msgid "A different storage device is mounted here; choose the folder again"
+msgstr ""
+
+msgid "No lyrics available"
+msgstr ""
+
+msgid "No translated lyrics available"
+msgstr ""
+
+msgid "Timed lyrics are unavailable; choose TXT"
+msgstr ""
+
+msgid "Some characters cannot be represented in GBK; retry with UTF-8"
+msgstr ""
+
+msgid "Not enough space in the save folder"
+msgstr ""
+
+msgid "Not enough temporary space for MP3 conversion"
+msgstr ""
+
+msgid "Only a preview is available; full audio was not downloaded"
+msgstr ""
+
+msgid "Full audio is unavailable"
+msgstr ""
+
+msgid "Cannot verify the full song duration"
+msgstr ""
+
+msgid "Saved file has changed; refresh and download a new copy"
+msgstr ""
+
+msgid "Choose the original save folder"
+msgstr ""
+
+msgid "A different device was selected"
+msgstr ""
+
+msgid "Select this save location again before retrying"
+msgstr ""
+
+msgid "Wait for active downloads to stop"
+msgstr ""
+
+msgid "Wait for the cancelled worker to stop before retrying"
+msgstr ""
+
+msgid "Download interrupted; retry to continue"
+msgstr ""
+
+msgid "Output was not produced"
+msgstr ""
+
+msgid "Download worker failed"
+msgstr ""
+
+msgid "Audio transfer failed or was cancelled"
+msgstr ""
+
+msgid "Audio transfer was empty or incomplete"
+msgstr ""
+
+msgid "Network download failed"
+msgstr ""
+
+msgid "Download batch finished"
+msgstr ""
+
+msgid "Import preview"
+msgstr ""
+
+msgid "No downloads yet"
+msgstr ""
+
+msgid "Choose songs from a song list to start downloading"
+msgstr ""
+
+msgid "No saved files"
+msgstr ""
+
+msgid "Download songs or scan a folder to manage existing MP3 files"
+msgstr ""

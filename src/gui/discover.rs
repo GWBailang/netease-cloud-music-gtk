@@ -4,9 +4,9 @@
 // Distributed under terms of the GPL-3.0-or-later license.
 //
 use crate::{application::Action, gui::SongListGridItem, model::ImageDownloadImpl, path::CACHE};
-use async_channel::{unbounded, Sender};
-use glib::{clone, ControlFlow};
-use gtk::{glib, prelude::*, subclass::prelude::*, CompositeTemplate, *};
+use async_channel::{Sender, unbounded};
+use glib::{ControlFlow, clone};
+use gtk::{CompositeTemplate, glib, prelude::*, subclass::prelude::*, *};
 use ncm_api::{BannersInfo, SongList};
 use once_cell::sync::OnceCell;
 use std::sync::{Arc, RwLock};

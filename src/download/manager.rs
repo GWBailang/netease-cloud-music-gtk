@@ -97,6 +97,9 @@ impl DownloadManager {
         fs::create_dir_all(&temp_dir)?;
         let catalog_path = data_dir.join("downloads.json");
         let mut catalog = Catalog::load(&catalog_path)?;
+        catalog.pending_cleanup.retain(|f| {
+            f.location.removable || storage::cleanup_temporary(&f.location, &f.relative).is_err()
+        });
         for task in &mut catalog.tasks {
             if !task.stage.terminal() {
                 task.stage = TaskStage::Interrupted;
@@ -297,6 +300,7 @@ impl DownloadManager {
             let id = state.catalog.tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
             let complete = outputs.iter().all(|o| o.state == OutputState::Skipped);
             state.catalog.tasks.push(TaskRecord {
+                source_info: None,
                 id,
                 song_id: song.id,
                 song: Some(song),
@@ -340,6 +344,7 @@ impl DownloadManager {
         for item in collection.items.iter().filter(|i| i.song.is_none()) {
             let id = state.catalog.tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
             state.catalog.tasks.push(TaskRecord {
+                source_info: None,
                 id,
                 song_id: item.song_id,
                 song: None,
@@ -404,6 +409,14 @@ impl DownloadManager {
                 song.location = confirmed.clone();
             }
         }
+        state.catalog.pending_cleanup.retain_mut(|f| {
+            if &f.location.id == id {
+                f.location = confirmed.clone();
+                storage::cleanup_temporary(&f.location, &f.relative).is_err()
+            } else {
+                true
+            }
+        });
         state.catalog.save(&self.core.catalog_path)?;
         state.invalid.remove(id);
         let snapshot = state.catalog.snapshot();
@@ -413,6 +426,17 @@ impl DownloadManager {
     }
 
     pub fn retry(&self, id: TaskId, client: MusicApi) -> Result<()> {
+        self.retry_options(id, client, None)
+    }
+    pub fn retry_utf8(&self, id: TaskId, client: MusicApi) -> Result<()> {
+        self.retry_options(id, client, Some(TextEncoding::Utf8))
+    }
+    fn retry_options(
+        &self,
+        id: TaskId,
+        client: MusicApi,
+        encoding: Option<TextEncoding>,
+    ) -> Result<()> {
         let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         let task = state
             .catalog
@@ -445,6 +469,9 @@ impl DownloadManager {
             }
         }
         let task = state.catalog.tasks.iter_mut().find(|t| t.id == id).unwrap();
+        if let Some(encoding) = encoding {
+            task.options.encoding = encoding;
+        }
         for output in &mut task.outputs {
             if !matches!(output.state, OutputState::Saved | OutputState::Skipped) {
                 output.state = OutputState::Pending;
@@ -583,6 +610,35 @@ impl DownloadManager {
         drop(state);
         self.core.emit(DownloadEvent::Changed(snapshot));
         Ok(report)
+    }
+    pub fn refresh_files(&self) -> Result<()> {
+        let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
+        let invalid = state.invalid.clone();
+        for saved in &mut state.catalog.saved {
+            saved.state = if invalid.contains(&saved.location.id)
+                || storage::validate_location(&saved.location).is_err()
+            {
+                SavedState::Unavailable
+            } else {
+                let mut status = SavedState::Available;
+                for file in &saved.files {
+                    match storage::fingerprint(&saved.location, &file.relative) {
+                        Ok(actual) if actual != file.fingerprint => {
+                            status = SavedState::Changed;
+                            break;
+                        }
+                        Err(_) => status = SavedState::Missing,
+                        _ => {}
+                    }
+                }
+                status
+            };
+        }
+        state.catalog.save(&self.core.catalog_path)?;
+        let snapshot = state.catalog.snapshot();
+        drop(state);
+        self.core.emit(DownloadEvent::Changed(snapshot));
+        Ok(())
     }
     pub fn remove_missing(&self) -> Result<()> {
         let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -765,6 +821,9 @@ impl Core {
                             .iter_mut()
                             .find(|t| t.id == id)
                             .ok_or_else(|| anyhow!("Task was removed"))?;
+                        if prepared.source_info.is_some() {
+                            record.source_info = prepared.source_info.clone();
+                        }
                         if let Some(output) = record
                             .outputs
                             .iter_mut()
@@ -863,6 +922,8 @@ impl Core {
             .map(|s| format!("{} - {}", s.singer, s.name))
             .unwrap_or_else(|| task.song_id.to_string());
         if let Some(saved) = catalog.saved.iter_mut().find(|s| s.key == key) {
+            saved.encoding = task.options.encoding;
+            saved.state = SavedState::Available;
             for file in files {
                 if !saved.files.iter().any(|f| f.relative == file.relative) {
                     saved.files.push(file);
@@ -870,6 +931,7 @@ impl Core {
             }
         } else {
             catalog.saved.push(SavedSong {
+                state: SavedState::Available,
                 key,
                 location: task.options.target.clone(),
                 song: task.song.clone(),

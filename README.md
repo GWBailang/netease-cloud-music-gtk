@@ -25,10 +25,15 @@
 - [x] Mpris2 绑定
 - [x] 播放列表
 - [x] 歌词
+- [x] MP3 下载、LRC / TXT / SRT 歌词导出、批量下载与文件管理
 - [X] 桌面歌词(依赖于 [desktop-lyrics](https://github.com/tuberry/desktop-lyric) 或 osdlyrics)
 
 ## 运行依赖
 > openssl, gstreamer, gstreamer-plugins-base, gstreamer-plugins-good, gstreamer-plugins-bad, gstreamer-plugins-ugly
+
+## 歌曲下载
+
+支持将单曲、所选歌曲、完整歌单或专辑保存为 MP3，可选择本地目录或已挂载的 TF 卡目录。主菜单提供下载队列、已有文件扫描与删除管理。详见 [使用说明](docs/song-download-usage.md)。
 
 ## 安装
 ### openSUSE Tumbleweed

@@ -30,7 +30,11 @@ fn pixbuf_to_argb32(pixbuf: &Pixbuf) -> (Vec<u8>, i32, i32) {
             let r = pixels[offset];
             let g = pixels[offset + 1];
             let b = pixels[offset + 2];
-            let a = if n_channels >= 4 { pixels[offset + 3] } else { 255 };
+            let a = if n_channels >= 4 {
+                pixels[offset + 3]
+            } else {
+                255
+            };
             argb_data.push(a);
             argb_data.push(r);
             argb_data.push(g);
@@ -44,7 +48,11 @@ fn load_app_icon() -> Vec<Icon> {
     match Pixbuf::from_read(Cursor::new(APP_ICON)) {
         Ok(pixbuf) => {
             let (argb_data, width, height) = pixbuf_to_argb32(&pixbuf);
-            vec![Icon { width, height, data: argb_data }]
+            vec![Icon {
+                width,
+                height,
+                data: argb_data,
+            }]
         }
         Err(e) => {
             warn!("加载托盘图标失败: {}", e);
@@ -138,11 +146,19 @@ impl TrayState {
     }
 
     pub fn get_song_title(&self) -> String {
-        self.song_title.lock().ok().map(|t| t.clone()).unwrap_or_else(|| gettext("NetEase Cloud Music"))
+        self.song_title
+            .lock()
+            .ok()
+            .map(|t| t.clone())
+            .unwrap_or_else(|| gettext("NetEase Cloud Music"))
     }
 
     pub fn get_song_artist(&self) -> String {
-        self.song_artist.lock().ok().map(|a| a.clone()).unwrap_or_default()
+        self.song_artist
+            .lock()
+            .ok()
+            .map(|a| a.clone())
+            .unwrap_or_default()
     }
 
     pub fn get_cover_icon_data(&self) -> Vec<u8> {

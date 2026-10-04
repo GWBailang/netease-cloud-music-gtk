@@ -157,6 +157,10 @@ pub fn commit_file_tracked(
     track: impl Fn(&Path, bool) -> Result<()>,
 ) -> Result<StoredFile> {
     ensure!(!cancelled.load(Ordering::Relaxed), "Download cancelled");
+    ensure!(
+        available_space(target)? >= fs::metadata(prepared)?.len(),
+        "Not enough space in the save folder"
+    );
     let (parent, name) = open_parent(target, relative, true)?;
     let temporary = format!(".ncm-{}.part", fastrand::u64(..));
     let temporary_relative = relative.with_file_name(&temporary);
@@ -294,6 +298,7 @@ fn scan_dir(target: &TargetLocation, relative: &Path, result: &mut Vec<SavedSong
             })
             .unwrap_or(stem);
         result.push(SavedSong {
+            state: SavedState::Available,
             key: format!("{}:{}", target.id, path.display()),
             location: target.clone(),
             song: None,
@@ -373,4 +378,38 @@ pub fn execute_delete_with_trash(
         })
         .collect();
     DeleteReport { results }
+}
+
+/// Remove only a specific journalled temporary name from a validated location.
+pub fn cleanup_temporary(target: &TargetLocation, relative: &Path) -> Result<()> {
+    let name = relative
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow!("Invalid temporary path"))?;
+    ensure!(
+        name.strip_prefix(".ncm-")
+            .and_then(|s| s.strip_suffix(".part"))
+            .is_some_and(|s| s.parse::<u64>().is_ok()),
+        "Not an owned temporary filename"
+    );
+    let (parent, name) = open_parent(target, relative, false)?;
+    match rfs::openat(
+        &parent,
+        &name,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Err(rustix::io::Errno::NOENT) => return Ok(()),
+        Err(e) => return Err(e.into()),
+        Ok(fd) => {
+            let file: File = fd.into();
+            ensure!(
+                file.metadata()?.is_file(),
+                "Temporary path is not a regular file"
+            );
+        }
+    }
+    rfs::unlinkat(&parent, &name, AtFlags::empty())?;
+    parent.sync_all()?;
+    Ok(())
 }

@@ -188,8 +188,18 @@ pub struct StoredFile {
     pub kind: FileKind,
     pub fingerprint: Fingerprint,
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SavedState {
+    #[default]
+    Available,
+    Missing,
+    Changed,
+    Unavailable,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSong {
+    #[serde(default)]
+    pub state: SavedState,
     pub key: String,
     pub location: TargetLocation,
     pub song: Option<SongInfo>,
@@ -250,6 +260,8 @@ pub struct OutputRecord {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRecord {
+    #[serde(default)]
+    pub source_info: Option<String>,
     pub id: TaskId,
     pub song_id: u64,
     pub song: Option<SongInfo>,

@@ -29,6 +29,11 @@ dependency('gstreamer-bad-audio-1.0', version: '>= 1.16')
 
 cargo_sources = files(
   'Cargo.toml',
+  'vendor/netease-cloud-music-api/Cargo.toml',
+  'vendor/netease-cloud-music-api/src/lib.rs',
+  'vendor/netease-cloud-music-api/src/downloads.rs',
+  'vendor/netease-cloud-music-api/src/model.rs',
+  'vendor/netease-cloud-music-api/src/encrypt.rs',
 )
 
 subdir('data')

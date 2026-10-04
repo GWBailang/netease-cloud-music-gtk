@@ -595,3 +595,409 @@ msgstr "切换为最新优先"
 
 #~ msgid "{} songs, {} favs"
 #~ msgstr "{} 首歌曲，{} 收藏"
+
+# Song downloads and saved-file management
+msgid "Downloads"
+msgstr "下载与文件管理"
+
+msgid "Download defaults"
+msgstr "下载默认设置"
+
+msgid "Save folder, MP3 quality and lyrics"
+msgstr "保存目录、MP3 音质和歌词"
+
+msgid "Download songs"
+msgstr "下载歌曲"
+
+msgid "Save files"
+msgstr "保存文件"
+
+msgid "Save location"
+msgstr "保存位置"
+
+msgid "Choose folder"
+msgstr "选择目录"
+
+msgid "Choose save folder"
+msgstr "选择保存目录"
+
+msgid "Download content"
+msgstr "下载内容"
+
+msgid "Audio and lyrics"
+msgstr "音频与歌词"
+
+msgid "Audio only"
+msgstr "仅音频"
+
+msgid "Lyrics only"
+msgstr "仅歌词"
+
+msgid "MP3 bitrate"
+msgstr "MP3 码率"
+
+msgid "Fixed bitrate, 44.1 kHz, stereo"
+msgstr "固定码率、44.1 kHz、双声道"
+
+msgid "Lyric formats"
+msgstr "歌词格式"
+
+msgid "Lyric content"
+msgstr "歌词内容"
+
+msgid "Original"
+msgstr "原文"
+
+msgid "Original and separate translation"
+msgstr "原文和独立译文"
+
+msgid "Bilingual"
+msgstr "双语"
+
+msgid "Text encoding"
+msgstr "文本编码"
+
+msgid "Batch downloads"
+msgstr "批量下载"
+
+msgid "Create a playlist folder"
+msgstr "创建歌单子目录"
+
+msgid "Number filenames in playlist order"
+msgstr "按歌单顺序编号"
+
+msgid "Add to download queue"
+msgstr "加入下载队列"
+
+msgid "Available space"
+msgstr "可用空间"
+
+msgid "Estimated MP3 size"
+msgstr "预计 MP3 大小"
+
+msgid "Excludes lyrics, tags and temporary files"
+msgstr "不含歌词、标签和临时文件"
+
+msgid "duplicates removed"
+msgstr "首重复歌曲已去重"
+
+msgid "songs"
+msgstr "首歌曲"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Download queue"
+msgstr "下载任务"
+
+msgid "Saved files"
+msgstr "已保存文件"
+
+msgid "Clear finished history"
+msgstr "清除已结束的记录"
+
+msgid "Search songs or folders"
+msgstr "搜索歌曲或目录"
+
+msgid "Scan folder"
+msgstr "扫描目录"
+
+msgid "Select visible"
+msgstr "全选当前结果"
+
+msgid "Delete selected"
+msgstr "删除所选文件"
+
+msgid "Remove missing entries"
+msgstr "移除缺失记录"
+
+msgid "All save locations"
+msgstr "所有保存位置"
+
+msgid "selected"
+msgstr "项已选中"
+
+msgid "Downloaded"
+msgstr "已下载"
+
+msgid "Imported"
+msgstr "已纳入"
+
+msgid "Import"
+msgstr "纳入管理"
+
+msgid "Import existing files?"
+msgstr "纳入已有文件？"
+
+msgid "Scan folder for existing MP3 files"
+msgstr "扫描目录中的已有 MP3 文件"
+
+msgid "No MP3 files found"
+msgstr "未找到 MP3 文件"
+
+msgid "Files imported"
+msgstr "文件已纳入管理"
+
+msgid "Finished history cleared; saved files are retained"
+msgstr "已清除结束的下载记录，保存的文件仍保留"
+
+msgid "Missing entries removed"
+msgstr "已移除缺失文件记录"
+
+msgid "Refresh file status"
+msgstr "刷新文件状态"
+
+msgid "File status refreshed"
+msgstr "文件状态已刷新"
+
+msgid "Missing files"
+msgstr "文件缺失"
+
+msgid "Files changed"
+msgstr "文件已变更"
+
+msgid "Location unavailable"
+msgstr "目录不可用"
+
+msgid "Available"
+msgstr "可用"
+
+msgid "Active"
+msgstr "进行中"
+
+msgid "Source audio"
+msgstr "源音频"
+
+msgid "Download song"
+msgstr "下载歌曲"
+
+msgid "Download current song"
+msgstr "下载当前歌曲"
+
+msgid "Download all songs"
+msgstr "下载全部歌曲"
+
+msgid "Select song"
+msgstr "选择歌曲"
+
+msgid "Select songs"
+msgstr "选择歌曲"
+
+msgid "Cancel selection"
+msgstr "取消选择"
+
+msgid "Select all loaded songs"
+msgstr "全选已加载歌曲"
+
+msgid "Only songs currently loaded in this view are selected"
+msgstr "仅选择当前列表中已加载的歌曲"
+
+msgid "Download selected"
+msgstr "下载所选"
+
+msgid "Pending"
+msgstr "待处理"
+
+msgid "Saved"
+msgstr "已保存"
+
+msgid "Already saved"
+msgstr "已有文件，已跳过"
+
+msgid "Unavailable"
+msgstr "不可用"
+
+msgid "Failed"
+msgstr "失败"
+
+msgid "Waiting"
+msgstr "等待中"
+
+msgid "Fetching resources"
+msgstr "获取资源"
+
+msgid "Downloading"
+msgstr "下载中"
+
+msgid "Converting"
+msgstr "转换中"
+
+msgid "Saving"
+msgstr "保存中"
+
+msgid "Complete"
+msgstr "完成"
+
+msgid "Cancelled"
+msgstr "已取消"
+
+msgid "Interrupted"
+msgstr "已中断"
+
+msgid "Unknown song"
+msgstr "未知歌曲"
+
+msgid "Retry"
+msgstr "重试"
+
+msgid "Retry as UTF-8"
+msgstr "按 UTF-8 重试"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Download cancelled"
+msgstr "已取消下载"
+
+msgid "Storage device disconnected; choose its folder again before retrying"
+msgstr "存储设备已断开，请重新选择目录后重试"
+
+msgid "Download manager is unavailable"
+msgstr "下载管理暂不可用"
+
+msgid "Loading all playlist songs…"
+msgstr "正在加载完整歌单…"
+
+msgid "Unable to load playlist"
+msgstr "无法加载歌单"
+
+msgid "No songs to download"
+msgstr "没有可下载的歌曲"
+
+msgid "Added to download queue"
+msgstr "已加入下载队列"
+
+msgid "Choose the storage folder again"
+msgstr "重新选择存储目录"
+
+msgid "Select files first"
+msgstr "请先选择文件"
+
+msgid "Delete saved files"
+msgstr "删除已保存文件"
+
+msgid "Choose which files to include. The next step shows the exact files."
+msgstr "选择要删除的文件类型。下一步将列出具体文件。"
+
+msgid "MP3 audio"
+msgstr "MP3 音频"
+
+msgid "Preview files"
+msgstr "预览文件"
+
+msgid "No matching files"
+msgstr "没有匹配的文件"
+
+msgid "Confirm file deletion"
+msgstr "确认删除文件"
+
+msgid "Only these files will be removed. Other locations and the online playlist are retained. Moving to Trash may not free space on this device."
+msgstr "仅删除下列文件，其他位置的副本和在线歌单会保留。移入回收站可能不会释放设备上的空间。"
+
+msgid "files"
+msgstr "个文件"
+
+msgid "Move to Trash"
+msgstr "移到回收站"
+
+msgid "Delete permanently"
+msgstr "永久删除"
+
+msgid "Files deleted"
+msgstr "文件删除结果"
+
+msgid "These files were retained. Trash failures require a separate permanent-delete confirmation."
+msgstr "下列文件已保留。回收站操作失败后，永久删除需要重新确认。"
+
+msgid "Choose at least one lyric format"
+msgstr "请至少选择一种歌词格式"
+
+msgid "Choose a save folder"
+msgstr "请选择保存目录"
+
+msgid "Save location is unavailable; choose the mounted folder again"
+msgstr "保存位置不可用，请重新选择已挂载的目录"
+
+msgid "A different storage device is mounted here; choose the folder again"
+msgstr "此处挂载了不同的设备，请重新选择目录"
+
+msgid "No lyrics available"
+msgstr "没有歌词"
+
+msgid "No translated lyrics available"
+msgstr "没有翻译歌词"
+
+msgid "Timed lyrics are unavailable; choose TXT"
+msgstr "没有时间轴歌词，请选择 TXT"
+
+msgid "Some characters cannot be represented in GBK; retry with UTF-8"
+msgstr "部分字符无法用 GBK 表示，请按 UTF-8 重试"
+
+msgid "Not enough space in the save folder"
+msgstr "保存目录空间不足"
+
+msgid "Not enough temporary space for MP3 conversion"
+msgstr "电脑临时目录空间不足，无法转换 MP3"
+
+msgid "Only a preview is available; full audio was not downloaded"
+msgstr "只能获取试听片段，未保存为完整音频"
+
+msgid "Full audio is unavailable"
+msgstr "完整音频不可用"
+
+msgid "Cannot verify the full song duration"
+msgstr "无法验证完整歌曲时长"
+
+msgid "Saved file has changed; refresh and download a new copy"
+msgstr "保存的文件已变更，请刷新并重新下载副本"
+
+msgid "Choose the original save folder"
+msgstr "请选择原保存目录"
+
+msgid "A different device was selected"
+msgstr "所选设备与原设备不一致"
+
+msgid "Select this save location again before retrying"
+msgstr "请重新选择保存目录后重试"
+
+msgid "Wait for active downloads to stop"
+msgstr "请等待进行中的下载停止"
+
+msgid "Wait for the cancelled worker to stop before retrying"
+msgstr "请等待取消操作完成后再重试"
+
+msgid "Download interrupted; retry to continue"
+msgstr "下载已中断，请重试继续"
+
+msgid "Output was not produced"
+msgstr "未生成此文件"
+
+msgid "Download worker failed"
+msgstr "下载任务执行失败"
+
+msgid "Audio transfer failed or was cancelled"
+msgstr "音频传输失败或已取消"
+
+msgid "Audio transfer was empty or incomplete"
+msgstr "音频数据为空或不完整"
+
+msgid "Network download failed"
+msgstr "音频网络下载失败"
+
+msgid "Download batch finished"
+msgstr "本批下载已结束"
+
+msgid "Import preview"
+msgstr "纳入文件预览"
+
+msgid "No downloads yet"
+msgstr "暂无下载任务"
+
+msgid "Choose songs from a song list to start downloading"
+msgstr "在歌曲列表中选择歌曲开始下载"
+
+msgid "No saved files"
+msgstr "暂无保存的文件"
+
+msgid "Download songs or scan a folder to manage existing MP3 files"
+msgstr "下载歌曲，或扫描目录以管理已有 MP3 文件"

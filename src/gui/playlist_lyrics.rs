@@ -5,8 +5,8 @@
 //
 use adw::subclass::prelude::BinImpl;
 use async_channel::Sender;
-use glib::{closure_local, ParamSpec, Value};
-use gtk::{glib, prelude::*, subclass::prelude::*, CompositeTemplate, *};
+use glib::{ParamSpec, Value, closure_local};
+use gtk::{CompositeTemplate, glib, prelude::*, subclass::prelude::*, *};
 use log::warn;
 use ncm_api::SongInfo;
 use once_cell::sync::Lazy;
@@ -90,19 +90,17 @@ impl PlayListLyricsPage {
         if !imp.subscribed.get() {
             imp.subscribed.set(true);
             let songs_list = imp.songs_list.get().downgrade();
-            window.connect_local(
-                "current-song-changed",
-                false,
-                move |args| {
-                    let id = args[1].get::<u64>().unwrap_or(0);
-                    if let Some(songs_list) = songs_list.upgrade() {
-                        songs_list.update_playing_song(id);
-                    }
-                    None
-                },
-            );
+            window.connect_local("current-song-changed", false, move |args| {
+                let id = args[1].get::<u64>().unwrap_or(0);
+                if let Some(songs_list) = songs_list.upgrade() {
+                    songs_list.update_playing_song(id);
+                }
+                None
+            });
         }
-        imp.songs_list.get().update_playing_song(window.current_song_id());
+        imp.songs_list
+            .get()
+            .update_playing_song(window.current_song_id());
     }
 
     pub fn update_lyrics_text(&self, text: &str) {
@@ -152,11 +150,7 @@ impl PlayListLyricsPage {
             &buffer.start_iter(),
             &buffer.end_iter(),
         );
-        buffer.remove_tag(
-            &uttered_text_tag,
-            &buffer.start_iter(),
-            &buffer.end_iter(),
-        );
+        buffer.remove_tag(&uttered_text_tag, &buffer.start_iter(), &buffer.end_iter());
         // gtk doesn't seem to be happy to apply tags to a multi-line TextIter region after an immediate `remove_tag``, so we apply tags line by line
         for i in 0..line_start {
             let start = buffer.iter_at_line(i);
@@ -188,7 +182,6 @@ impl PlayListLyricsPage {
 
         mark_to_return
     }
-
 }
 
 impl Default for PlayListLyricsPage {

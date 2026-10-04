@@ -60,6 +60,12 @@ impl LyricDocument {
             translated: parse_part(translated),
         }
     }
+    pub(super) fn translation_only(&self) -> Self {
+        Self {
+            original: self.translated.clone(),
+            translated: Part::default(),
+        }
+    }
     pub fn has_translation(&self) -> bool {
         !self.translated.text.is_empty()
     }

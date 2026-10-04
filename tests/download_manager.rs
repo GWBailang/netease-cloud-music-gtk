@@ -309,3 +309,49 @@ fn removed_target_requires_identity_checked_confirmation() {
     assert_eq!(manager.snapshot().locations[0].root, options.target.root);
     manager.shutdown();
 }
+
+#[test]
+fn restart_cleans_only_journalled_temporary_files_and_refresh_marks_changed_audio() {
+    let (temp, manager, _events, options) = setup(Backend::new(0));
+    manager
+        .enqueue(
+            vec![common::song(1)],
+            options.clone(),
+            None,
+            MusicApi::new(2),
+        )
+        .unwrap();
+    wait(&manager);
+    manager.shutdown();
+    std::thread::sleep(Duration::from_millis(30));
+    let catalog_path = temp.0.join("data/downloads.json");
+    let mut catalog = Catalog::load(&catalog_path).unwrap();
+    fs::write(options.target.root.join(".ncm-123.part"), b"owned").unwrap();
+    fs::write(options.target.root.join("other.part"), b"external").unwrap();
+    catalog
+        .pending_cleanup
+        .push(netease_cloud_music_gtk4::download::catalog::CleanupFile {
+            location: options.target.clone(),
+            relative: ".ncm-123.part".into(),
+        });
+    catalog.save(&catalog_path).unwrap();
+    let (reopened, _) = DownloadManager::new_with_backend(
+        temp.0.join("data"),
+        temp.0.join("temp2"),
+        Backend::new(0),
+    )
+    .unwrap();
+    assert!(!options.target.root.join(".ncm-123.part").exists());
+    assert!(options.target.root.join("other.part").exists());
+    let audio = reopened.snapshot().saved[0]
+        .files
+        .iter()
+        .find(|f| f.kind == FileKind::Audio)
+        .unwrap()
+        .relative
+        .clone();
+    fs::write(options.target.root.join(audio), b"replaced").unwrap();
+    reopened.refresh_files().unwrap();
+    assert_eq!(reopened.snapshot().saved[0].state, SavedState::Changed);
+    reopened.shutdown();
+}

@@ -5,7 +5,7 @@
 //
 
 use async_channel::Sender;
-use gtk::{glib, prelude::*, subclass::prelude::*, CompositeTemplate};
+use gtk::{CompositeTemplate, glib, prelude::*, subclass::prelude::*};
 use ncm_api::SongList;
 use once_cell::sync::OnceCell;
 

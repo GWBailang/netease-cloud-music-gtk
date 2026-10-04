@@ -1,16 +1,18 @@
+use super::lyrics::LyricDocument;
 use super::{api, audio, model::*};
 use anyhow::{Result, ensure};
-use ncm_api::MusicApi;
+use ncm_api::{DownloadResource, MusicApi};
 use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
 
 pub struct PreparedOutput {
+    pub source_info: Option<String>,
     pub suffix: String,
     pub path: Option<PathBuf>,
     pub error: Option<String>,
@@ -19,6 +21,7 @@ pub struct PreparedOutput {
 impl PreparedOutput {
     pub fn ready(suffix: &str, path: PathBuf) -> Self {
         Self {
+            source_info: None,
             suffix: suffix.into(),
             path: Some(path),
             error: None,
@@ -27,6 +30,7 @@ impl PreparedOutput {
     }
     pub fn failed(suffix: &str, error: &str) -> Self {
         Self {
+            source_info: None,
             suffix: suffix.into(),
             path: None,
             error: Some(error.into()),
@@ -35,6 +39,7 @@ impl PreparedOutput {
     }
     pub fn unavailable(suffix: &str, error: &str) -> Self {
         Self {
+            source_info: None,
             suffix: suffix.into(),
             path: None,
             error: Some(error.into()),
@@ -53,8 +58,44 @@ pub trait DownloadBackend: Send + Sync {
         encoder: &Mutex<()>,
     ) -> Result<Vec<PreparedOutput>>;
 }
+/// Resource lookup boundary; streaming, conversion and storage remain production code.
+pub trait DownloadService: Send + Sync {
+    fn resource(&self, client: &MusicApi, id: u64, bitrate: u32) -> Result<DownloadResource>;
+    fn lyrics(&self, client: &MusicApi, id: u64) -> Result<LyricDocument>;
+}
+struct ApiService;
+impl DownloadService for ApiService {
+    fn resource(&self, client: &MusicApi, id: u64, bitrate: u32) -> Result<DownloadResource> {
+        futures_lite::future::block_on(client.download_resource(id, bitrate))
+    }
+    fn lyrics(&self, client: &MusicApi, id: u64) -> Result<LyricDocument> {
+        futures_lite::future::block_on(api::fetch_lyrics(client, id))
+    }
+}
+pub struct ServiceBackend {
+    service: Arc<dyn DownloadService>,
+}
+impl ServiceBackend {
+    pub fn new(service: Arc<dyn DownloadService>) -> Self {
+        Self { service }
+    }
+}
 pub struct NetworkBackend;
 impl DownloadBackend for NetworkBackend {
+    fn run(
+        &self,
+        task: &TaskRecord,
+        client: &MusicApi,
+        temp: &Path,
+        cancelled: &AtomicBool,
+        update: &dyn Fn(TaskStage, f64),
+        encoder: &Mutex<()>,
+    ) -> Result<Vec<PreparedOutput>> {
+        ServiceBackend::new(Arc::new(ApiService))
+            .run(task, client, temp, cancelled, update, encoder)
+    }
+}
+impl DownloadBackend for ServiceBackend {
     fn run(
         &self,
         task: &TaskRecord,
@@ -75,15 +116,21 @@ impl DownloadBackend for NetworkBackend {
         };
         let mut outputs = Vec::new();
         if pending(".mp3") {
-            let prepared = (|| -> Result<PathBuf> {
+            let prepared = (|| -> Result<(PathBuf, String)> {
                 ensure!(!cancelled.load(Ordering::Relaxed), "Download cancelled");
                 update(TaskStage::Fetching, 0.0);
-                let resource = futures_lite::future::block_on(
-                    client.download_resource(song.id, task.options.bitrate),
-                )?;
+                let resource = self
+                    .service
+                    .resource(client, song.id, task.options.bitrate)?;
                 ensure!(
                     !resource.preview,
                     "Only a preview is available; full audio was not downloaded"
+                );
+                let space = rustix::fs::statvfs(temp)?;
+                ensure!(
+                    space.f_bavail.saturating_mul(space.f_frsize)
+                        > song.duration.saturating_mul(task.options.bitrate as u64) / 8,
+                    "Not enough temporary space for MP3 conversion"
                 );
                 let source = temp.join("source");
                 update(TaskStage::Downloading, 0.0);
@@ -130,75 +177,82 @@ impl DownloadBackend for NetworkBackend {
                     cancelled,
                     |p| update(TaskStage::Converting, p),
                 )?;
-                Ok(output)
+                Ok((
+                    output,
+                    format!(
+                        "{} · {} kbps",
+                        resource.codec.to_uppercase(),
+                        resource.source_rate / 1000
+                    ),
+                ))
             })();
             outputs.push(match prepared {
-                Ok(path) => PreparedOutput::ready(".mp3", path),
+                Ok((path, source)) => {
+                    let mut output = PreparedOutput::ready(".mp3", path);
+                    output.source_info = Some(source);
+                    output
+                }
                 Err(e) => PreparedOutput::failed(".mp3", &e.to_string()),
             });
         }
         ensure!(!cancelled.load(Ordering::Relaxed), "Download cancelled");
         if task.options.content.lyrics() {
             update(TaskStage::Fetching, 0.0);
-            let lyrics = futures_lite::future::block_on(api::fetch_lyrics(client, song.id));
+            let lyrics = self.service.lyrics(client, song.id);
             for format in &task.options.lyric_formats {
-                let suffix = format!(".{}", format.extension());
-                let translated = format!(".translated.{}", format.extension());
-                if !pending(&suffix) && !pending(&translated) {
-                    continue;
+                let original = format!(".{}", format.extension());
+                let mut variants = vec![(original, false)];
+                if task.options.lyric_mode == LyricMode::Separate {
+                    variants.push((format!(".translated.{}", format.extension()), true));
                 }
-                match &lyrics {
-                    Ok(doc) => match doc.render(
-                        *format,
-                        task.options.lyric_mode,
-                        task.options.encoding,
-                        Some(song.duration),
-                    ) {
+                for (suffix, translation) in variants {
+                    if !pending(&suffix) {
+                        continue;
+                    }
+                    let rendered = match &lyrics {
+                        Err(e) => {
+                            outputs.push(PreparedOutput::failed(&suffix, &e.to_string()));
+                            continue;
+                        }
+                        Ok(doc) if translation => {
+                            if doc.has_translation() {
+                                doc.translation_only().render(
+                                    *format,
+                                    LyricMode::Original,
+                                    task.options.encoding,
+                                    Some(song.duration),
+                                )
+                            } else {
+                                Err(anyhow::anyhow!("No translated lyrics available"))
+                            }
+                        }
+                        Ok(doc) => doc.render(
+                            *format,
+                            if task.options.lyric_mode == LyricMode::Separate {
+                                LyricMode::Original
+                            } else {
+                                task.options.lyric_mode
+                            },
+                            task.options.encoding,
+                            Some(song.duration),
+                        ),
+                    };
+                    match rendered {
                         Ok(rendered) => {
                             for output in rendered {
-                                if !pending(&output.suffix) {
-                                    continue;
-                                }
-                                let path = temp.join(format!("lyrics{}", output.suffix));
+                                let path = temp.join(format!("lyrics{suffix}"));
                                 match fs::write(&path, output.bytes) {
-                                    Ok(()) => {
-                                        outputs.push(PreparedOutput::ready(&output.suffix, path))
-                                    }
-                                    Err(e) => outputs.push(PreparedOutput::failed(
-                                        &output.suffix,
-                                        &e.to_string(),
-                                    )),
+                                    Ok(()) => outputs.push(PreparedOutput::ready(&suffix, path)),
+                                    Err(e) => outputs
+                                        .push(PreparedOutput::failed(&suffix, &e.to_string())),
                                 }
                             }
-                            if task.options.lyric_mode == LyricMode::Separate
-                                && !doc.has_translation()
-                                && pending(&translated)
-                            {
-                                outputs.push(PreparedOutput::unavailable(
-                                    &translated,
-                                    "No translated lyrics available",
-                                ));
-                            }
                         }
-                        Err(e) => {
-                            if pending(&suffix) {
-                                outputs.push(PreparedOutput::unavailable(&suffix, &e.to_string()));
-                            }
-                            if task.options.lyric_mode == LyricMode::Separate
-                                && pending(&translated)
-                            {
-                                outputs
-                                    .push(PreparedOutput::unavailable(&translated, &e.to_string()));
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        if pending(&suffix) {
-                            outputs.push(PreparedOutput::unavailable(&suffix, &e.to_string()));
-                        }
-                        if task.options.lyric_mode == LyricMode::Separate && pending(&translated) {
-                            outputs.push(PreparedOutput::unavailable(&translated, &e.to_string()));
-                        }
+                        Err(e) => outputs.push(if e.to_string().contains("GBK") {
+                            PreparedOutput::failed(&suffix, &e.to_string())
+                        } else {
+                            PreparedOutput::unavailable(&suffix, &e.to_string())
+                        }),
                     }
                 }
             }

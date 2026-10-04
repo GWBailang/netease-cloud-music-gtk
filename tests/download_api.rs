@@ -71,20 +71,25 @@ fn server(response: &'static [u8]) -> String {
 #[test]
 fn streaming_http_errors_and_truncation_are_failures() {
     let temp = common::TempDir::new();
-    let client = MusicApi::new(2);
+    let mut client = MusicApi::new(2);
     for response in [
         b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".as_slice(),
         b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort".as_slice(),
     ] {
-        assert!(
-            futures_lite::future::block_on(client.download_to(
-                &server(response),
-                &temp.0.join("part"),
-                &AtomicBool::new(false),
-                |_, _| {}
-            ))
-            .is_err()
-        );
+        let url = server(response);
+        client.set_proxy(&url).unwrap();
+        let result = futures_lite::future::block_on(client.download_to(
+            &url,
+            &temp.0.join("part"),
+            &AtomicBool::new(false),
+            |_, _| {},
+        ));
+        let message = result.unwrap_err().to_string();
+        if response.starts_with(b"HTTP/1.1 404") {
+            assert!(message.contains("HTTP 404"), "{message}");
+        } else {
+            assert!(message.contains("transfer"), "{message}");
+        }
     }
 }
 #[test]
@@ -93,7 +98,9 @@ fn cancelled_stream_never_succeeds() {
     let cancel = Arc::new(AtomicBool::new(false));
     let signal = cancel.clone();
     let url = server(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\n12345678");
-    let result = futures_lite::future::block_on(MusicApi::new(2).download_to(
+    let mut client = MusicApi::new(2);
+    client.set_proxy(&url).unwrap();
+    let result = futures_lite::future::block_on(client.download_to(
         &url,
         &temp.0.join("part"),
         &cancel,
@@ -102,4 +109,5 @@ fn cancelled_stream_never_succeeds() {
         },
     ));
     assert!(result.is_err());
+    assert!(cancel.load(Ordering::Relaxed));
 }

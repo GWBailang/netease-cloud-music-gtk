@@ -213,6 +213,7 @@ mod imp {
         pub unikey: Arc<RwLock<String>>,
         pub ncmapi: RefCell<Option<NcmClient>>,
         pub downloads: OnceCell<netease_cloud_music_gtk4::download::manager::DownloadManager>,
+        pub download_monitor: OnceCell<gio::VolumeMonitor>,
         pub downloads_page:
             RefCell<Option<netease_cloud_music_gtk4::downloads_page::DownloadsPage>>,
     }
@@ -237,6 +238,7 @@ mod imp {
                 ncmapi,
                 downloads: OnceCell::new(),
                 downloads_page: RefCell::new(None),
+                download_monitor: OnceCell::new(),
             }
         }
     }
@@ -433,6 +435,7 @@ impl NeteaseCloudMusicGtk4Application {
                             .unwrap_or(songs.len()),
                         collection.clone(),
                     );
+                    dialog.set_total_duration(songs.iter().map(|s| s.duration).sum());
                     dialog.connect_save(move |prefs| {
                         if let Err(e) = save_preferences(&settings, &prefs) {
                             warn!("Download settings: {e}");
@@ -471,6 +474,9 @@ impl NeteaseCloudMusicGtk4Application {
                     let client = ncmapi.client.clone();
                     let sender = imp.sender.clone();
                     let task = manager.snapshot().tasks.into_iter().find(|t| t.id == id);
+                    let utf8 = task
+                        .as_ref()
+                        .is_some_and(|t| t.error.as_ref().is_some_and(|e| e.contains("GBK")));
                     if let Some(task) = task.filter(|t| t.options.target.removable) {
                         // A removable target must be chosen again after a restart or removal.
                         let chooser = gtk::FileDialog::builder()
@@ -480,7 +486,11 @@ impl NeteaseCloudMusicGtk4Application {
                         chooser.select_folder(Some(&parent),None::<&gio::Cancellable>,move|result|{if let Ok(file)=result{if let Some(path)=file.path(){let manager=manager.clone();let client=client.clone();let sender=sender.clone();std::thread::spawn(move ||{let result=netease_cloud_music_gtk4::download_dialog::capture_folder(&path,true,task.options.target.volume_uuid.clone()).and_then(|target|{manager.confirm_location(&task.options.target.id,&target)?;manager.retry(id,client)});if let Err(e)=result{let _=sender.send_blocking(Action::AddToast(e.to_string()));}});}}});
                     } else {
                         std::thread::spawn(move || {
-                            if let Err(e) = manager.retry(id, client) {
+                            if let Err(e) = if utf8 {
+                                manager.retry_utf8(id, client)
+                            } else {
+                                manager.retry(id, client)
+                            } {
                                 let _ = sender.send_blocking(Action::AddToast(e.to_string()));
                             }
                         });
@@ -1678,11 +1688,20 @@ impl NeteaseCloudMusicGtk4Application {
                         }
                     }
                 });
+                let _ = self.imp().download_monitor.set(monitor);
                 let _ = self.imp().downloads.set(manager);
                 let weak = self.downgrade();
                 MAINCONTEXT.spawn_local(async move {
+                    let mut batch=std::collections::HashSet::new();
                     while let Ok(event) = events.recv().await {
                         let Some(app) = weak.upgrade() else { break };
+                        if let DownloadEvent::Changed(snapshot)=&event {
+                            for task in snapshot.tasks.iter().filter(|t|!t.stage.terminal()){batch.insert(task.id);}
+                            if !batch.is_empty() && snapshot.tasks.iter().filter(|t|batch.contains(&t.id)).all(|t|t.stage.terminal()) {
+                                let complete=snapshot.tasks.iter().filter(|t|batch.contains(&t.id) && t.stage==netease_cloud_music_gtk4::download::model::TaskStage::Complete).count();
+                                let _=app.imp().sender.send_blocking(Action::AddToast(format!("{} · {}: {} / {}",gettext("Download batch finished"),gettext("Complete"),complete,batch.len())));batch.clear();
+                            }
+                        }
                         if let Some(page) = app.imp().downloads_page.borrow().as_ref() {
                             page.apply_event(event);
                         } else if let DownloadEvent::Error(error) = event {

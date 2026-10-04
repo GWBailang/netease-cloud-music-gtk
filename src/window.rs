@@ -202,9 +202,11 @@ mod imp {
 
         fn signals() -> &'static [Signal] {
             static SIGNALS: Lazy<Vec<Signal>> = Lazy::new(|| {
-                vec![Signal::builder("current-song-changed")
-                    .param_types([u64::static_type()])
-                    .build()]
+                vec![
+                    Signal::builder("current-song-changed")
+                        .param_types([u64::static_type()])
+                        .build(),
+                ]
             });
             SIGNALS.as_ref()
         }
@@ -491,7 +493,9 @@ impl NeteaseCloudMusicGtk4Window {
         player_controls.remove_song(song_info);
 
         let sis = player_controls.get_list();
-        let si = player_controls.get_current_song().unwrap_or(crate::utils::empty_song_info());
+        let si = player_controls
+            .get_current_song()
+            .unwrap_or(crate::utils::empty_song_info());
 
         self.init_playlist_lyrics_page(sis, si.to_owned());
 
