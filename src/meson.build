@@ -33,6 +33,7 @@ rust_sources = files(
   'download/manager.rs',
   'download/worker.rs',
   'gui/download_dialog.rs',
+  'gui/downloads_page.rs',
   'application.rs',
   'config.rs',
   'main.rs',

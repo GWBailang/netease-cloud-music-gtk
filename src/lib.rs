@@ -2,3 +2,6 @@
 pub mod download;
 #[path = "gui/download_dialog.rs"]
 pub mod download_dialog;
+
+#[path = "gui/downloads_page.rs"]
+pub mod downloads_page;

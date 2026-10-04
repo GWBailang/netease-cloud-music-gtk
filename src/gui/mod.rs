@@ -37,3 +37,8 @@ pub use toplist::*;
 pub use user_menus::*;
 
 pub use netease_cloud_music_gtk4::download_dialog::DownloadDialog;
+
+#[cfg(test)]
+pub(crate) use songlist_row::SonglistRow;
+#[cfg(test)]
+pub(crate) use songlist_view::SongListView;

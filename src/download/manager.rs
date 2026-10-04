@@ -358,6 +358,60 @@ impl DownloadManager {
         self.core.emit(DownloadEvent::Changed(snapshot));
         Ok(ids)
     }
+    pub fn confirm_location(&self, id: &LocationId, target: &TargetLocation) -> Result<()> {
+        storage::validate_location(target)?;
+        let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
+        let old = state
+            .catalog
+            .locations
+            .iter()
+            .find(|l| &l.id == id)
+            .ok_or_else(|| anyhow!("Save location not found"))?;
+        ensure!(old.root == target.root, "Choose the original save folder");
+        if let Some(uuid) = &old.volume_uuid {
+            ensure!(
+                target.volume_uuid.as_ref() == Some(uuid),
+                "A different device was selected"
+            );
+        } else {
+            ensure!(
+                old.filesystem_id == target.filesystem_id && old.root_inode == target.root_inode,
+                "Storage identity changed; scan the folder to import its files"
+            );
+        }
+        ensure!(
+            !state
+                .catalog
+                .tasks
+                .iter()
+                .any(|t| &t.options.target.id == id && state.busy.contains(&t.id)),
+            "Wait for active downloads to stop"
+        );
+        let mut confirmed = target.clone();
+        confirmed.id = id.clone();
+        for location in &mut state.catalog.locations {
+            if &location.id == id {
+                *location = confirmed.clone();
+            }
+        }
+        for task in &mut state.catalog.tasks {
+            if &task.options.target.id == id {
+                task.options.target = confirmed.clone();
+            }
+        }
+        for song in &mut state.catalog.saved {
+            if &song.location.id == id {
+                song.location = confirmed.clone();
+            }
+        }
+        state.catalog.save(&self.core.catalog_path)?;
+        state.invalid.remove(id);
+        let snapshot = state.catalog.snapshot();
+        drop(state);
+        self.core.emit(DownloadEvent::Changed(snapshot));
+        Ok(())
+    }
+
     pub fn retry(&self, id: TaskId, client: MusicApi) -> Result<()> {
         let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         let task = state

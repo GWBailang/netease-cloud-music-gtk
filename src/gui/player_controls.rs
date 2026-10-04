@@ -968,6 +968,17 @@ impl Default for PlayerControls {
 #[gtk::template_callbacks]
 impl PlayerControls {
     #[template_callback]
+    fn download_current_clicked_cb(&self) {
+        if let Some(song) = self.get_current_song() {
+            let _ = self
+                .imp()
+                .sender
+                .get()
+                .unwrap()
+                .send_blocking(Action::RequestDownload(vec![song], None));
+        }
+    }
+    #[template_callback]
     fn volume_cb(&self, adj: Adjustment) {
         self.set_volume(adj.value());
     }

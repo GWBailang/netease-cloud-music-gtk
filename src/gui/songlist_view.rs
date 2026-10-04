@@ -6,13 +6,13 @@
 use gio::Settings;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{glib, CompositeTemplate, *};
+use gtk::{CompositeTemplate, glib, *};
 
 use crate::{application::Action, gui::songlist_row::SonglistRow};
 use async_channel::Sender;
 use glib::{
-    clone, subclass::Signal, ParamSpec, ParamSpecBoolean, ParamSpecInt, RustClosure,
-    SignalHandlerId, Value,
+    ParamSpec, ParamSpecBoolean, ParamSpecInt, RustClosure, SignalHandlerId, Value, clone,
+    subclass::Signal,
 };
 use ncm_api::SongInfo;
 use once_cell::sync::{Lazy, OnceCell};
@@ -77,6 +77,10 @@ impl SongListView {
                 #[weak(rename_to = s)]
                 self,
                 move |row| {
+                    if s.imp().selection_mode.get() {
+                        row.set_checked(!row.is_checked());
+                        return;
+                    }
                     if row.is_activatable() || row.not_ignore_grey() {
                         row.switch_image(true);
                         sender.send_blocking(Action::AddPlay(si.clone())).unwrap();
@@ -89,6 +93,13 @@ impl SongListView {
                 .bind("not-ignore-grey", &row, "not-ignore-grey")
                 .get_only()
                 .build();
+            row.set_selection_mode(imp.selection_mode.get());
+            let weak = self.downgrade();
+            row.selection_button().connect_toggled(move |_| {
+                if let Some(list) = weak.upgrade() {
+                    list.update_selection_count();
+                }
+            });
             listbox.append(&row);
         });
     }
@@ -111,7 +122,61 @@ impl SongListView {
         sis
     }
 
+    pub fn set_selection_mode(&self, active: bool) {
+        self.imp().selection_mode.set(active);
+        self.imp().select_all.set_visible(active);
+        self.imp().download_selected.set_visible(active);
+        self.imp()
+            .selection_toggle
+            .set_label(&gettextrs::gettext(if active {
+                "Cancel selection"
+            } else {
+                "Select songs"
+            }));
+        let mut child = self.list_box().first_child();
+        while let Some(widget) = child {
+            let row = widget.downcast::<SonglistRow>().unwrap();
+            row.set_selection_mode(active);
+            child = row.next_sibling();
+        }
+        self.update_selection_count();
+    }
+    pub fn selected_songs(&self) -> Vec<SongInfo> {
+        let mut songs = vec![];
+        let mut child = self.list_box().first_child();
+        while let Some(widget) = child {
+            let row = widget.downcast::<SonglistRow>().unwrap();
+            if row.is_checked() {
+                if let Some(song) = row.get_song_info() {
+                    songs.push(song);
+                }
+            }
+            child = row.next_sibling();
+        }
+        songs
+    }
+    pub fn download_selected(&self) {
+        let songs = self.selected_songs();
+        if !songs.is_empty() {
+            let _ = self
+                .imp()
+                .sender
+                .get()
+                .unwrap()
+                .send_blocking(Action::RequestDownload(songs, None));
+        }
+    }
+    fn update_selection_count(&self) {
+        let count = self.selected_songs().len();
+        self.imp().download_selected.set_label(&format!(
+            "{} ({count})",
+            gettextrs::gettext("Download selected")
+        ));
+        self.imp().download_selected.set_sensitive(count > 0);
+    }
+
     pub fn clear_list(&self) {
+        self.set_selection_mode(false);
         let listbox = self.imp().listbox.get();
         while let Some(child) = listbox.last_child() {
             listbox.remove(&child);
@@ -162,6 +227,13 @@ mod imp {
         pub adw_clamp: TemplateChild<adw::Clamp>,
         #[template_child]
         pub listbox: TemplateChild<ListBox>,
+        #[template_child]
+        pub selection_toggle: TemplateChild<Button>,
+        #[template_child]
+        pub select_all: TemplateChild<Button>,
+        #[template_child]
+        pub download_selected: TemplateChild<Button>,
+        pub selection_mode: Cell<bool>,
 
         pub sender: OnceCell<Sender<Action>>,
         pub settings: OnceCell<Settings>,
@@ -197,6 +269,30 @@ mod imp {
             let obj = self.obj();
 
             obj.setup_settings();
+            let weak = obj.downgrade();
+            self.selection_toggle.connect_clicked(move |_| {
+                if let Some(list) = weak.upgrade() {
+                    list.set_selection_mode(!list.imp().selection_mode.get());
+                }
+            });
+            let weak = obj.downgrade();
+            self.download_selected.connect_clicked(move |_| {
+                if let Some(list) = weak.upgrade() {
+                    list.download_selected();
+                }
+            });
+            let weak = obj.downgrade();
+            self.select_all.connect_clicked(move |_| {
+                if let Some(list) = weak.upgrade() {
+                    let mut child = list.list_box().first_child();
+                    while let Some(widget) = child {
+                        let row = widget.downcast::<SonglistRow>().unwrap();
+                        row.set_checked(true);
+                        child = row.next_sibling();
+                    }
+                    list.update_selection_count();
+                }
+            });
 
             // clear old actived row
             let old_select_row = Rc::new(RefCell::new(-1));
@@ -217,9 +313,11 @@ mod imp {
 
         fn signals() -> &'static [Signal] {
             static SIGNALS: Lazy<Vec<Signal>> = Lazy::new(|| {
-                vec![Signal::builder("row-activated")
-                    .param_types([SonglistRow::static_type()])
-                    .build()]
+                vec![
+                    Signal::builder("row-activated")
+                        .param_types([SonglistRow::static_type()])
+                        .build(),
+                ]
             });
             SIGNALS.as_ref()
         }

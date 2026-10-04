@@ -92,6 +92,13 @@ async fn playlist_restart(window: &NeteaseCloudMusicGtk4Window, sender: &Sender<
 
 #[derive(Debug, Clone)]
 pub enum Action {
+    OpenDownloads,
+    RequestDownload(
+        Vec<SongInfo>,
+        Option<netease_cloud_music_gtk4::download::model::CollectionSnapshot>,
+    ),
+    RequestCollectionDownload(u64),
+    RetryDownload(u64),
     AddToast(String),
 
     // (关键字，搜索类型，起始点，数量)
@@ -205,6 +212,9 @@ mod imp {
         pub receiver: RefCell<Option<Receiver<Action>>>,
         pub unikey: Arc<RwLock<String>>,
         pub ncmapi: RefCell<Option<NcmClient>>,
+        pub downloads: OnceCell<netease_cloud_music_gtk4::download::manager::DownloadManager>,
+        pub downloads_page:
+            RefCell<Option<netease_cloud_music_gtk4::downloads_page::DownloadsPage>>,
     }
 
     #[glib::object_subclass]
@@ -225,6 +235,8 @@ mod imp {
                 receiver,
                 unikey,
                 ncmapi,
+                downloads: OnceCell::new(),
+                downloads_page: RefCell::new(None),
             }
         }
     }
@@ -260,6 +272,8 @@ mod imp {
 
             let window = app.create_window();
             let _ = self.window.set(window.downgrade());
+
+            app.setup_downloads();
 
             // Setup action channel
             let receiver = self.receiver.borrow_mut().take().unwrap();
@@ -308,6 +322,9 @@ impl NeteaseCloudMusicGtk4Application {
     }
 
     pub fn graceful_quit(&self) {
+        if let Some(manager) = self.imp().downloads.get() {
+            manager.shutdown();
+        }
         if let Some(window) = self.imp().window.get().and_then(WeakRef::upgrade) {
             window.imp().graceful_quitting.set(true);
             window.imp().player_controls.save_current_state();
@@ -349,6 +366,128 @@ impl NeteaseCloudMusicGtk4Application {
         };
 
         match action {
+            Action::OpenDownloads => {
+                if let Some(manager) = imp.downloads.get() {
+                    let page = imp.downloads_page.borrow().clone().unwrap_or_else(|| {
+                        let page = netease_cloud_music_gtk4::downloads_page::DownloadsPage::new(
+                            manager.clone(),
+                        );
+                        let sender = imp.sender.clone();
+                        page.connect_retry(move |id| {
+                            let _ = sender.send_blocking(Action::RetryDownload(id));
+                        });
+                        page
+                    });
+                    window.page_new(&page.widget, &gettext("Downloads"), "OpenDownloads");
+                    imp.downloads_page.replace(Some(page));
+                } else {
+                    let _ = imp.sender.send_blocking(Action::AddToast(gettext(
+                        "Download manager is unavailable",
+                    )));
+                }
+            }
+            Action::RequestCollectionDownload(id) => {
+                let client = ncmapi.client.clone();
+                let sender = imp.sender.clone();
+                let _ =
+                    sender.send_blocking(Action::AddToast(gettext("Loading all playlist songs…")));
+                std::thread::spawn(move || {
+                    match futures_lite::future::block_on(
+                        netease_cloud_music_gtk4::download::api::complete_collection(&client, id),
+                    ) {
+                        Ok(collection) => {
+                            let songs = collection
+                                .items
+                                .iter()
+                                .filter_map(|i| i.song.clone())
+                                .collect();
+                            let _ = sender
+                                .send_blocking(Action::RequestDownload(songs, Some(collection)));
+                        }
+                        Err(e) => {
+                            let _ = sender.send_blocking(Action::AddToast(format!(
+                                "{}: {e}",
+                                gettext("Unable to load playlist")
+                            )));
+                        }
+                    }
+                });
+            }
+            Action::RequestDownload(songs, collection) => {
+                use netease_cloud_music_gtk4::download_dialog::{
+                    load_preferences, save_preferences,
+                };
+                if songs.is_empty() && collection.as_ref().is_none_or(|c| c.items.is_empty()) {
+                    let _ = imp
+                        .sender
+                        .send_blocking(Action::AddToast(gettext("No songs to download")));
+                    return glib::ControlFlow::Continue;
+                }
+                if let Some(manager) = imp.downloads.get() {
+                    let settings = window.settings().clone();
+                    let dialog = crate::gui::DownloadDialog::new(
+                        load_preferences(&settings),
+                        collection
+                            .as_ref()
+                            .map(|c| c.items.len())
+                            .unwrap_or(songs.len()),
+                        collection.clone(),
+                    );
+                    dialog.connect_save(move |prefs| {
+                        if let Err(e) = save_preferences(&settings, &prefs) {
+                            warn!("Download settings: {e}");
+                        }
+                    });
+                    let manager = manager.clone();
+                    let client = ncmapi.client.clone();
+                    let sender = imp.sender.clone();
+                    dialog.connect_submit(move |options| {
+                        let manager = manager.clone();
+                        let client = client.clone();
+                        let songs = songs.clone();
+                        let collection = collection.clone();
+                        let sender = sender.clone();
+                        std::thread::spawn(move || {
+                            let result = if let Some(collection) = collection {
+                                manager.enqueue_collection(collection, options, client)
+                            } else {
+                                manager.enqueue(songs, options, None, client)
+                            };
+                            let text = match result {
+                                Ok(ids) => {
+                                    format!("{}: {}", gettext("Added to download queue"), ids.len())
+                                }
+                                Err(e) => e.to_string(),
+                            };
+                            let _ = sender.send_blocking(Action::AddToast(text));
+                        });
+                    });
+                    dialog.present_for(&window);
+                }
+            }
+            Action::RetryDownload(id) => {
+                if let Some(manager) = imp.downloads.get() {
+                    let manager = manager.clone();
+                    let client = ncmapi.client.clone();
+                    let sender = imp.sender.clone();
+                    let task = manager.snapshot().tasks.into_iter().find(|t| t.id == id);
+                    if let Some(task) = task.filter(|t| t.options.target.removable) {
+                        // A removable target must be chosen again after a restart or removal.
+                        let chooser = gtk::FileDialog::builder()
+                            .title(gettext("Choose the storage folder again"))
+                            .build();
+                        let parent = window.clone();
+                        chooser.select_folder(Some(&parent),None::<&gio::Cancellable>,move|result|{if let Ok(file)=result{if let Some(path)=file.path(){let manager=manager.clone();let client=client.clone();let sender=sender.clone();std::thread::spawn(move ||{let result=netease_cloud_music_gtk4::download_dialog::capture_folder(&path,true,task.options.target.volume_uuid.clone()).and_then(|target|{manager.confirm_location(&task.options.target.id,&target)?;manager.retry(id,client)});if let Err(e)=result{let _=sender.send_blocking(Action::AddToast(e.to_string()));}});}}});
+                    } else {
+                        std::thread::spawn(move || {
+                            if let Err(e) = manager.retry(id, client) {
+                                let _ = sender.send_blocking(Action::AddToast(e.to_string()));
+                            }
+                        });
+                    }
+                }
+            }
+
             Action::CheckLogin(user_menu, logined_cookie_jar) => {
                 let sender = imp.sender.clone();
                 let ncmapi = self.init_ncmapi(NcmClient::from_cookie_jar(logined_cookie_jar));
@@ -362,6 +501,9 @@ impl NeteaseCloudMusicGtk4Application {
                                 window.set_uid(login_info.uid);
 
                                 ncmapi.save_cookie_jar_to_file();
+                                if let Some(manager) = s.imp().downloads.get() {
+                                    manager.stop_network_tasks();
+                                }
                                 s.imp().ncmapi.replace(Some(ncmapi));
 
                                 sender
@@ -393,6 +535,9 @@ impl NeteaseCloudMusicGtk4Application {
                 });
             }
             Action::Logout => {
+                if let Some(manager) = imp.downloads.get() {
+                    manager.stop_network_tasks();
+                }
                 let sender = imp.sender.clone();
                 let s = self.clone();
                 MAINCONTEXT.spawn_local_with_priority(Priority::DEFAULT_IDLE, async move {
@@ -1515,7 +1660,54 @@ impl NeteaseCloudMusicGtk4Application {
         glib::ControlFlow::Continue
     }
 
+    fn setup_downloads(&self) {
+        use netease_cloud_music_gtk4::download::{manager::DownloadManager, model::DownloadEvent};
+        match DownloadManager::new(
+            crate::path::DATA.join("downloads"),
+            crate::path::CACHE.join("downloads"),
+        ) {
+            Ok((manager, events)) => {
+                let monitor = gio::VolumeMonitor::get();
+                let shared = manager.clone();
+                monitor.connect_mount_removed(move |_, mount| {
+                    if let Some(root) = mount.root().path() {
+                        for location in shared.snapshot().locations {
+                            if location.root.starts_with(&root) {
+                                shared.invalidate_location(&location.id);
+                            }
+                        }
+                    }
+                });
+                let _ = self.imp().downloads.set(manager);
+                let weak = self.downgrade();
+                MAINCONTEXT.spawn_local(async move {
+                    while let Ok(event) = events.recv().await {
+                        let Some(app) = weak.upgrade() else { break };
+                        if let Some(page) = app.imp().downloads_page.borrow().as_ref() {
+                            page.apply_event(event);
+                        } else if let DownloadEvent::Error(error) = event {
+                            let _ = app.imp().sender.send_blocking(Action::AddToast(error));
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                let _ = self.imp().sender.send_blocking(Action::AddToast(format!(
+                    "{}: {e}",
+                    gettext("Download manager is unavailable")
+                )));
+            }
+        }
+    }
+
     fn setup_gactions(&self) {
+        let downloads_action = gio::SimpleAction::new("downloads", None);
+        let sender = self.imp().sender.clone();
+        downloads_action.connect_activate(move |_, _| {
+            let _ = sender.send_blocking(Action::OpenDownloads);
+        });
+        self.add_action(&downloads_action);
+
         let preferences_action = gio::SimpleAction::new("preferences", None);
         preferences_action.connect_activate(clone!(
             #[weak(rename_to = app)]

@@ -282,3 +282,30 @@ fn importing_scan_does_not_duplicate_downloaded_file() {
     assert_eq!(manager.snapshot().saved.len(), 1);
     manager.shutdown();
 }
+
+#[test]
+fn removed_target_requires_identity_checked_confirmation() {
+    let (_temp, manager, _events, options) = setup(Backend::new(0));
+    manager
+        .enqueue(
+            vec![common::song(12)],
+            options.clone(),
+            None,
+            MusicApi::new(2),
+        )
+        .unwrap();
+    let wrong =
+        TargetLocation::capture(&options.target.root.parent().unwrap(), false, None, None).unwrap();
+    manager.invalidate_location(&options.target.id);
+    assert!(
+        manager
+            .confirm_location(&options.target.id, &wrong)
+            .is_err()
+    );
+    std::thread::sleep(Duration::from_millis(40));
+    manager
+        .confirm_location(&options.target.id, &options.target)
+        .unwrap();
+    assert_eq!(manager.snapshot().locations[0].root, options.target.root);
+    manager.shutdown();
+}

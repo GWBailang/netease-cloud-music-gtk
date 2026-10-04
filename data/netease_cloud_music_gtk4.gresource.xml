@@ -4,6 +4,7 @@
         <file compressed="true">gtk/window.ui</file>
         <file compressed="true">gtk/preferences.ui</file>
         <file compressed="true">gtk/download-dialog.ui</file>
+        <file compressed="true">gtk/downloads-page.ui</file>
         <file compressed="true">gtk/theme-selector.ui</file>
         <file compressed="true">gtk/discover.ui</file>
         <file compressed="true">gtk/my-page.ui</file>

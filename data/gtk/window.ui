@@ -254,7 +254,8 @@
             </item>
         </section>
 
-        <section>
+        <section><item><attribute name="label" translatable="yes">Downloads</attribute><attribute name="action">app.downloads</attribute></item></section>
+<section>
             <item>
                 <attribute name="label" translatable="yes">_Preferences</attribute>
                 <attribute name="action">app.preferences</attribute>

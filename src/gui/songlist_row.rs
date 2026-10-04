@@ -72,6 +72,28 @@ impl SonglistRow {
         imp.remove_button.set_visible(visible);
     }
 
+    pub fn download_button(&self) -> Button {
+        self.imp().download_button.get()
+    }
+    pub fn set_selection_mode(&self, active: bool) {
+        self.imp().selection.set_visible(active);
+        if !active {
+            self.imp().selection.set_active(false);
+        }
+        self.set_activatable(
+            active || self.get_song_info().is_some_and(|s| s.copyright.playable()),
+        );
+    }
+    pub fn is_checked(&self) -> bool {
+        self.imp().selection.is_active()
+    }
+    pub fn set_checked(&self, active: bool) {
+        self.imp().selection.set_active(active);
+    }
+    pub fn selection_button(&self) -> CheckButton {
+        self.imp().selection.get()
+    }
+
     fn set_name(&self, label: &str) {
         let imp = self.imp();
         imp.title_label.set_label(label);
@@ -108,8 +130,29 @@ impl SonglistRow {
 #[gtk::template_callbacks]
 impl SonglistRow {
     #[template_callback]
-    fn on_click(&self) {
+    fn on_click(&self, _press: i32, x: f64, y: f64) {
+        let mut picked = self.pick(x, y, PickFlags::DEFAULT);
+        while let Some(widget) = picked {
+            if widget.is::<Button>() || widget.is::<CheckButton>() {
+                return;
+            }
+            if widget == *self.upcast_ref::<Widget>() {
+                break;
+            }
+            picked = widget.parent();
+        }
         self.emit_activate();
+    }
+    #[template_callback]
+    fn download_button_clicked_cb(&self) {
+        if let Some(song) = self.get_song_info() {
+            let _ = self
+                .imp()
+                .sender
+                .get()
+                .unwrap()
+                .send_blocking(Action::RequestDownload(vec![song], None));
+        }
     }
 
     #[template_callback]
@@ -187,6 +230,10 @@ mod imp {
         pub album_button: TemplateChild<Button>,
         #[template_child]
         pub remove_button: TemplateChild<Button>,
+        #[template_child]
+        pub download_button: TemplateChild<Button>,
+        #[template_child]
+        pub selection: TemplateChild<CheckButton>,
 
         pub sender: OnceCell<Sender<Action>>,
         pub song_info: RefCell<Option<SongInfo>>,

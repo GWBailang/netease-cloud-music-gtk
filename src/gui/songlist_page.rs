@@ -157,6 +157,8 @@ impl SonglistPage {
         } else {
             songs_list.init_new_list(sis, likes);
         }
+        imp.download_all
+            .set_visible(!matches!(detail, SongListDetail::Radio(_)));
         imp.sort_button
             .get()
             .set_visible(matches!(detail, SongListDetail::Radio(_)));
@@ -218,6 +220,8 @@ mod imp {
     pub struct SonglistPage {
         #[template_child(id = "cover_image")]
         pub cover_image: TemplateChild<Image>,
+        #[template_child]
+        pub download_all: TemplateChild<Button>,
         #[template_child(id = "title_label")]
         pub title_label: TemplateChild<Label>,
         #[template_child(id = "time_label")]
@@ -273,6 +277,36 @@ mod imp {
 
     #[gtk::template_callbacks]
     impl SonglistPage {
+        #[template_callback]
+        fn download_all_clicked_cb(&self) {
+            use netease_cloud_music_gtk4::download::model::{CollectionItem, CollectionSnapshot};
+            if self.loading.get() {
+                return;
+            }
+            let sender = self.sender.get().unwrap();
+            if let Some(info) = self.songlist.borrow().as_ref() {
+                if matches!(*self.page_type.borrow(), Some(DiscoverSubPage::SongList)) {
+                    let _ = sender.send_blocking(Action::RequestCollectionDownload(info.id));
+                } else {
+                    let songs = self.songs_list.get_songinfo_list();
+                    let snapshot = CollectionSnapshot {
+                        id: info.id,
+                        name: info.name.clone(),
+                        kind: "album".into(),
+                        items: songs
+                            .iter()
+                            .map(|song| CollectionItem {
+                                song_id: song.id,
+                                song: Some(song.clone()),
+                                error: None,
+                            })
+                            .collect(),
+                        duplicates: 0,
+                    };
+                    let _ = sender.send_blocking(Action::RequestDownload(songs, Some(snapshot)));
+                }
+            }
+        }
         #[template_callback]
         fn play_button_clicked_cb(&self) {
             let sender = self.sender.get().unwrap();
@@ -396,6 +430,7 @@ mod imp {
                     let loading = value.get().expect("The value needs to be of type `bool`.");
                     self.loading.replace(loading);
                     self.loading_spinner.get().set_spinning(loading);
+                    self.download_all.set_sensitive(!loading);
                 }
                 _ => unimplemented!(),
             }

@@ -80,7 +80,8 @@
                                         <property name="valign">end</property>
                                         <property name="spacing">7</property>
                                         <property name="orientation">horizontal</property>
-                                        <child>
+                                        <child><object class="GtkButton" id="download_all"><property name="icon-name">folder-download-symbolic</property><property name="tooltip-text" translatable="yes">Download all songs</property><signal name="clicked" handler="download_all_clicked_cb" swapped="true"/><style><class name="flat"/></style></object></child>
+<child>
                                             <object class="GtkButton" id="play_button">
                                                 <property name="halign">end</property>
                                                 <property name="valign">center</property>

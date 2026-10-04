@@ -8,7 +8,8 @@
         <property name="margin-start">20</property>
         <property name="margin-end">20</property>
         <property name="spacing">5</property>
-        <child>
+        <child><object class="GtkButton"><property name="icon-name">folder-download-symbolic</property><property name="valign">center</property><property name="tooltip-text" translatable="yes">Download current song</property><signal name="clicked" handler="download_current_clicked_cb" swapped="true"/><style><class name="flat"/></style></object></child>
+<child>
             <object class="GtkBox">
                 <property name="halign">start</property>
                 <property name="valign">center</property>

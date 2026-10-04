@@ -1,10 +1,11 @@
 mod common;
 use adw::prelude::*;
-use gtk::{gio, prelude::*};
+use gtk::gio;
 use netease_cloud_music_gtk4::{download::model::*, download_dialog::*};
 #[test]
 fn native_dialog_defaults_selection_and_saved_preferences() {
     adw::init().expect("UI verification requires an accessible display");
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     let temp = common::TempDir::new();
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data");
     assert!(
@@ -65,4 +66,128 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     assert_eq!(prefs.bitrate, 192);
     save_preferences(&settings, &selected).unwrap();
     assert_eq!(load_preferences(&settings).content, DownloadContent::Lyrics);
+    let (manager, _events) = netease_cloud_music_gtk4::download::manager::DownloadManager::new(
+        temp.0.join("catalog"),
+        temp.0.join("cache"),
+    )
+    .unwrap();
+    let page = netease_cloud_music_gtk4::downloads_page::DownloadsPage::new(manager.clone());
+    assert_eq!(
+        page.builder
+            .object::<gtk::Stack>("views")
+            .unwrap()
+            .visible_child_name()
+            .as_deref(),
+        Some("tasks")
+    );
+    assert_eq!(
+        page.builder
+            .object::<gtk::ListBox>("files")
+            .unwrap()
+            .first_child(),
+        None
+    );
+    let target_path = temp.0.join("existing");
+    std::fs::create_dir(&target_path).unwrap();
+    std::fs::write(target_path.join("Example.mp3"), b"existing MP3").unwrap();
+    std::fs::write(target_path.join("Example.lrc"), b"[00:01.00]example").unwrap();
+    let target = TargetLocation::capture(&target_path, false, None, None).unwrap();
+    let items = netease_cloud_music_gtk4::download::storage::scan(&target).unwrap();
+    manager.import_files(target, items).unwrap();
+    page.apply_event(DownloadEvent::Changed(manager.snapshot()));
+    let window = adw::Window::builder()
+        .default_width(800)
+        .default_height(600)
+        .content(&page.widget)
+        .build();
+    window.present();
+    spin(150);
+    page.builder
+        .object::<gtk::Stack>("views")
+        .unwrap()
+        .set_visible_child_name("saved");
+    page.builder
+        .object::<gtk::Button>("select_all")
+        .unwrap()
+        .emit_clicked();
+    page.builder
+        .object::<gtk::Button>("delete")
+        .unwrap()
+        .emit_clicked();
+    let choices = window
+        .visible_dialog()
+        .unwrap()
+        .downcast::<adw::AlertDialog>()
+        .unwrap();
+    assert_eq!(choices.heading().as_deref(), Some("Delete saved files"));
+    choices.emit_by_name::<()>("response", &[&"preview"]);
+    choices.close();
+    spin(350);
+    let confirmation = window
+        .visible_dialog()
+        .unwrap()
+        .downcast::<adw::AlertDialog>()
+        .unwrap();
+    assert_eq!(
+        confirmation.heading().as_deref(),
+        Some("Confirm file deletion")
+    );
+    assert_eq!(confirmation.default_response().as_deref(), Some("cancel"));
+    let file_text = labels(confirmation.extra_child().unwrap());
+    assert!(file_text.contains(&target_path.join("Example.mp3").display().to_string()));
+    assert!(file_text.contains(&target_path.join("Example.lrc").display().to_string()));
+    assert!(target_path.join("Example.mp3").exists());
+    screenshot(&window, "delete-preview");
+    confirmation.close();
+    spin(300);
+    screenshot(&window, "downloads-light");
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
+    window.set_default_size(540, 560);
+    spin(150);
+    screenshot(&window, "downloads-dark-small");
+    let visual = DownloadDialog::new(prefs, 2, None);
+    visual.present_for(&window);
+    spin(350);
+    screenshot(&window, "download-dialog-dark-small");
+    visual.dialog.close();
+    window.close();
+    drop(page);
+    assert!(manager.snapshot().tasks.is_empty());
+    manager.shutdown();
+}
+
+fn spin(ms: u64) {
+    let context = gtk::glib::MainContext::default();
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    while std::time::Instant::now() < until {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+fn labels(widget: gtk::Widget) -> String {
+    let mut text = widget
+        .clone()
+        .downcast::<gtk::Label>()
+        .map(|l| l.text().to_string())
+        .unwrap_or_default();
+    let mut child = widget.first_child();
+    while let Some(w) = child {
+        text.push_str(&labels(w.clone()));
+        child = w.next_sibling();
+    }
+    text
+}
+fn screenshot(window: &adw::Window, name: &str) {
+    let paintable = gtk::WidgetPaintable::new(Some(window));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+    let node = snapshot.to_node().unwrap();
+    let texture = window.renderer().unwrap().render_texture(&node, None);
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/download-ui");
+    std::fs::create_dir_all(&dir).unwrap();
+    texture
+        .save_to_png(dir.join(format!("{name}.png")))
+        .unwrap();
 }

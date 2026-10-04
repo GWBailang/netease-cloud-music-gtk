@@ -12,7 +12,8 @@
             <object class="GtkBox">
                 <property name="focusable">False</property>
                 <property name="margin-end">18</property>
-                <child>
+                <child><object class="GtkCheckButton" id="selection"><property name="visible">false</property><property name="valign">center</property><property name="tooltip-text" translatable="yes">Select song</property></object></child>
+<child>
                     <object class="GtkBox">
                         <property name="focusable">False</property>
                         <child>
@@ -92,7 +93,8 @@
                                 </attributes>
                             </object>
                         </child>
-                        <child>
+                        <child><object class="GtkButton" id="download_button"><property name="icon-name">folder-download-symbolic</property><property name="valign">center</property><property name="tooltip-text" translatable="yes">Download song</property><signal name="clicked" handler="download_button_clicked_cb" swapped="true"/><style><class name="flat"/></style></object></child>
+<child>
                             <object class="GtkButton" id="like_button">
                                 <property name="halign">end</property>
                                 <property name="valign">center</property>

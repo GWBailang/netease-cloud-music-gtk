@@ -62,3 +62,7 @@ fn main() {
     // terminal.
     std::process::exit(app.run().into());
 }
+
+#[cfg(test)]
+#[path = "../tests/ui/selection.rs"]
+mod gui_selection_tests;
