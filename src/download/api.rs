@@ -7,8 +7,9 @@ pub fn assemble_collection(
     tracks: PlaylistTracks,
     songs: Vec<SongInfo>,
 ) -> Result<CollectionSnapshot> {
+    // The service can undercount trackIds. Keep all IDs, but reject a shorter list.
     ensure!(
-        tracks.track_ids.len() == tracks.total,
+        tracks.track_ids.len() >= tracks.total,
         "Cannot verify all playlist tracks"
     );
     let mut details: HashMap<_, _> = songs.into_iter().map(|s| (s.id, s)).collect();
