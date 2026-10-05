@@ -221,6 +221,8 @@ impl DownloadDialog {
                             .map(|s| s.to_string());
                         object::<adw::ActionRow>(&dialog, "location")
                             .set_subtitle(&prefs.target_path.display().to_string());
+                        drop(prefs);
+                        update_space(&dialog, &shared);
                     }
                 }
             });
@@ -256,24 +258,31 @@ impl DownloadDialog {
         self.update_space();
     }
     pub fn update_space(&self) {
-        let prefs = self.data.prefs.borrow().clone();
-        let weak = self.dialog.downgrade();
-        let (tx, rx) = async_channel::bounded(1);
-        std::thread::spawn(move || {
-            let value = rustix::fs::statvfs(&prefs.target_path)
-                .map(|s| s.f_bavail.saturating_mul(s.f_frsize));
-            let _ = tx.send_blocking(value.ok());
-        });
-        glib::MainContext::default().spawn_local(async move {
-            if let (Ok(Some(bytes)), Some(dialog)) = (rx.recv().await, weak.upgrade()) {
+        update_space(&self.dialog, &self.data);
+    }
+}
+fn update_space(dialog: &adw::Dialog, data: &Rc<Data>) {
+    object::<gtk::Label>(dialog, "space").set_label("");
+    let path = data.prefs.borrow().target_path.clone();
+    let checking = path.clone();
+    let weak = dialog.downgrade();
+    let shared = data.clone();
+    let (tx, rx) = async_channel::bounded(1);
+    std::thread::spawn(move || {
+        let value = rustix::fs::statvfs(&checking).map(|s| s.f_bavail.saturating_mul(s.f_frsize));
+        let _ = tx.send_blocking(value.ok());
+    });
+    glib::MainContext::default().spawn_local(async move {
+        if let (Ok(Some(bytes)), Some(dialog)) = (rx.recv().await, weak.upgrade()) {
+            if shared.prefs.borrow().target_path == path {
                 object::<gtk::Label>(&dialog, "space").set_label(&format!(
                     "{}: {:.1} GB",
                     gettext("Available space"),
                     bytes as f64 / 1e9
                 ));
             }
-        });
-    }
+        }
+    });
 }
 fn update_visibility(dialog: &adw::Dialog) {
     let selection = object::<adw::ComboRow>(dialog, "content").selected();

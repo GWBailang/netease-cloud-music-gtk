@@ -39,6 +39,10 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     assert_eq!(prefs.bitrate, 192);
     assert_eq!(prefs.lyric_formats, vec![LyricFormat::Lrc]);
     let dialog = DownloadDialog::new(prefs.clone(), 1, None);
+    let space = dialog.builder.object::<gtk::Label>("space").unwrap();
+    space.set_label("stale previous folder");
+    dialog.update_space();
+    assert_ne!(space.text().as_str(), "stale previous folder");
     dialog.set_total_duration(10000);
     assert!(
         dialog
@@ -123,6 +127,17 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
         .object::<gtk::Stack>("views")
         .unwrap()
         .set_visible_child_name("saved");
+    let list = page.builder.object::<gtk::ListBox>("files").unwrap();
+    let selection = find_check(list.first_child().unwrap()).unwrap();
+    selection.set_active(true);
+    assert!(
+        page.builder
+            .object::<gtk::Label>("file_count")
+            .unwrap()
+            .text()
+            .contains("1 selected")
+    );
+    selection.set_active(false);
     page.builder
         .object::<gtk::Button>("select_all")
         .unwrap()
@@ -306,4 +321,18 @@ impl netease_cloud_music_gtk4::download::worker::DownloadBackend for UiBackend {
             ),
         ])
     }
+}
+
+fn find_check(widget: gtk::Widget) -> Option<gtk::CheckButton> {
+    if let Ok(check) = widget.clone().downcast::<gtk::CheckButton>() {
+        return Some(check);
+    }
+    let mut child = widget.first_child();
+    while let Some(w) = child {
+        if let Some(check) = find_check(w.clone()) {
+            return Some(check);
+        }
+        child = w.next_sibling();
+    }
+    None
 }

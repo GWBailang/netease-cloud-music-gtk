@@ -280,6 +280,14 @@ fn importing_scan_does_not_duplicate_downloaded_file() {
     let items = netease_cloud_music_gtk4::download::storage::scan(&options.target).unwrap();
     manager.import_files(options.target, items).unwrap();
     assert_eq!(manager.snapshot().saved.len(), 1);
+    assert!(
+        manager.snapshot().saved[0]
+            .files
+            .iter()
+            .filter(|f| f.kind == FileKind::Lyrics)
+            .all(|f| f.encoding == Some(TextEncoding::Utf8)),
+        "scan/import must preserve known lyric encoding"
+    );
     manager.shutdown();
 }
 
@@ -354,4 +362,122 @@ fn restart_cleans_only_journalled_temporary_files_and_refresh_marks_changed_audi
     reopened.refresh_files().unwrap();
     assert_eq!(reopened.snapshot().saved[0].state, SavedState::Changed);
     reopened.shutdown();
+}
+
+#[test]
+fn numbering_and_reordered_ordinals_create_new_copies() {
+    let (_temp, manager, _, mut options) = setup(Backend::new(0));
+    options.collection_folder = false;
+    let client = MusicApi::new(2);
+    manager
+        .enqueue(vec![common::song(1)], options.clone(), None, client.clone())
+        .unwrap();
+    wait(&manager);
+    options.numbered = true;
+    manager
+        .enqueue(vec![common::song(1)], options.clone(), None, client.clone())
+        .unwrap();
+    wait(&manager);
+    let tasks = manager.snapshot().tasks;
+    assert_ne!(tasks[0].basename, tasks[1].basename);
+    assert!(tasks[1].basename.to_string_lossy().starts_with("001 "));
+    manager
+        .enqueue(
+            vec![common::song(2), common::song(1)],
+            options,
+            None,
+            client,
+        )
+        .unwrap();
+    wait(&manager);
+    let tasks = manager.snapshot().tasks;
+    assert_ne!(tasks[1].basename, tasks[3].basename);
+    manager.shutdown();
+}
+#[test]
+fn adding_audio_to_dotted_lyric_name_keeps_companion_basename() {
+    let (_temp, manager, _, mut options) = setup(Backend::new(0));
+    options.content = DownloadContent::Lyrics;
+    let mut song = common::song(1);
+    song.name = "Mr. Blue".into();
+    let client = MusicApi::new(2);
+    manager
+        .enqueue(vec![song.clone()], options.clone(), None, client.clone())
+        .unwrap();
+    wait(&manager);
+    let base = manager.snapshot().tasks[0].basename.clone();
+    options.content = DownloadContent::AudioAndLyrics;
+    manager.enqueue(vec![song], options, None, client).unwrap();
+    wait(&manager);
+    let tasks = manager.snapshot().tasks;
+    assert_eq!(tasks[1].basename, base);
+    assert_eq!(
+        tasks[1]
+            .outputs
+            .iter()
+            .find(|o| o.suffix == ".lrc")
+            .unwrap()
+            .state,
+        OutputState::Skipped
+    );
+    manager.shutdown();
+}
+
+#[test]
+fn restart_cleans_journalled_local_work_but_preserves_foreign_files() {
+    let temp = common::TempDir::new();
+    let cache = temp.0.join("cache");
+    let data = temp.0.join("data");
+    fs::create_dir(&cache).unwrap();
+    fs::create_dir(&data).unwrap();
+    let owned = cache.join("task-77-88");
+    let foreign = cache.join("task-99-55");
+    fs::create_dir(&owned).unwrap();
+    fs::create_dir(&foreign).unwrap();
+    fs::write(owned.join("source"), b"source audio").unwrap();
+    fs::write(owned.join("audio.mp3"), b"converted audio").unwrap();
+    fs::write(foreign.join("notes.txt"), b"external").unwrap();
+    let mut json = serde_json::to_value(Catalog::default()).unwrap();
+    json["local_cleanup"] = serde_json::json!([
+        TargetLocation::capture(&owned, false, None, None).unwrap(),
+        TargetLocation::capture(&foreign, false, None, None).unwrap()
+    ]);
+    fs::write(
+        data.join("downloads.json"),
+        serde_json::to_vec(&json).unwrap(),
+    )
+    .unwrap();
+    let (manager, _) = DownloadManager::new_with_backend(data, cache, Backend::new(0)).unwrap();
+    assert!(
+        !owned.exists(),
+        "owned source/output audio remained after restart"
+    );
+    assert!(foreign.join("notes.txt").exists());
+    manager.shutdown();
+}
+
+#[test]
+fn shutdown_waits_for_worker_and_cleans_local_audio() {
+    let backend = Backend::new(200);
+    let (temp, manager, _, options) = setup(backend.clone());
+    manager
+        .enqueue(vec![common::song(1)], options, None, MusicApi::new(2))
+        .unwrap();
+    let start = Instant::now();
+    while backend.active.load(Ordering::SeqCst) == 0 {
+        assert!(start.elapsed() < Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    manager.shutdown();
+    assert!(!manager.wait_for_shutdown(Duration::from_millis(1)));
+    assert!(manager.wait_for_shutdown(Duration::from_secs(2)));
+    assert_eq!(backend.active.load(Ordering::SeqCst), 0);
+    assert_eq!(fs::read_dir(temp.0.join("temp")).unwrap().count(), 0);
+    assert!(
+        Catalog::load(&temp.0.join("data/downloads.json"))
+            .unwrap()
+            .local_cleanup
+            .is_empty()
+    );
+    assert!(manager.snapshot().saved.is_empty());
 }

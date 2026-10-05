@@ -182,8 +182,10 @@ pub enum FileKind {
     Audio,
     Lyrics,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredFile {
+    #[serde(default)]
+    pub encoding: Option<TextEncoding>,
     pub relative: PathBuf,
     pub kind: FileKind,
     pub fingerprint: Fingerprint,
@@ -198,6 +200,8 @@ pub enum SavedState {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSong {
+    #[serde(default)]
+    pub requested_basename: Option<PathBuf>,
     #[serde(default)]
     pub state: SavedState,
     pub key: String,
@@ -251,7 +255,7 @@ pub enum OutputState {
     Unavailable,
     Failed,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputRecord {
     pub suffix: String,
     pub state: OutputState,
@@ -260,6 +264,8 @@ pub struct OutputRecord {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRecord {
+    #[serde(default)]
+    pub requested_basename: Option<PathBuf>,
     #[serde(default)]
     pub source_info: Option<String>,
     pub id: TaskId,

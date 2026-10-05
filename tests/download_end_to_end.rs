@@ -210,42 +210,62 @@ fn batch_streams_converts_exports_and_deletes_without_affecting_other_copies() {
 }
 #[test]
 fn gbk_failed_lyrics_can_retry_as_utf8() {
-    let temp = common::TempDir::new();
-    let root = temp.0.join("lyrics");
-    fs::create_dir(&root).unwrap();
-    let backend = Arc::new(ServiceBackend::new(Arc::new(Sources {
-        base: String::new(),
-    })));
-    let (manager, _) =
-        DownloadManager::new_with_backend(temp.0.join("catalog"), temp.0.join("cache"), backend)
-            .unwrap();
-    let prefs = DownloadPreferences {
-        content: DownloadContent::Lyrics,
-        encoding: TextEncoding::Gbk,
-        ..Default::default()
-    };
-    let options = prefs
-        .with_target(TargetLocation::capture(&root, false, None, None).unwrap())
+    for removable in [false, true] {
+        let temp = common::TempDir::new();
+        let root = temp.0.join("lyrics");
+        fs::create_dir(&root).unwrap();
+        let backend = Arc::new(ServiceBackend::new(Arc::new(Sources {
+            base: String::new(),
+        })));
+        let (manager, _) = DownloadManager::new_with_backend(
+            temp.0.join("catalog"),
+            temp.0.join("cache"),
+            backend,
+        )
         .unwrap();
-    let id = manager
-        .enqueue(vec![common::song(1)], options, None, MusicApi::new(2))
-        .unwrap()[0];
-    wait(&manager);
-    assert_eq!(manager.snapshot().tasks[0].stage, TaskStage::Failed);
-    assert_eq!(
-        manager.snapshot().tasks[0].outputs[0].state,
-        OutputState::Failed
-    );
-    manager.retry_utf8(id, MusicApi::new(2)).unwrap();
-    wait(&manager);
-    let snapshot = manager.snapshot();
-    assert_eq!(snapshot.tasks[0].stage, TaskStage::Complete);
-    assert!(
-        fs::read_to_string(root.join(&snapshot.saved[0].files[0].relative))
-            .unwrap()
-            .contains('🎵')
-    );
-    manager.shutdown();
+        let prefs = DownloadPreferences {
+            content: DownloadContent::Lyrics,
+            encoding: TextEncoding::Gbk,
+            ..Default::default()
+        };
+        let options = prefs
+            .with_target(TargetLocation::capture(&root, removable, None, None).unwrap())
+            .unwrap();
+        let id = manager
+            .enqueue(vec![common::song(1)], options, None, MusicApi::new(2))
+            .unwrap()[0];
+        wait(&manager);
+        assert_eq!(manager.snapshot().tasks[0].stage, TaskStage::Failed);
+        assert_eq!(
+            manager.snapshot().tasks[0].outputs[0].state,
+            OutputState::Failed
+        );
+        let target = manager.snapshot().tasks[0].options.target.clone();
+        if removable {
+            manager.invalidate_location(&target.id);
+        }
+        manager
+            .retry_confirmed(
+                id,
+                MusicApi::new(2),
+                true,
+                if removable {
+                    Some((&target.id, &target))
+                } else {
+                    None
+                },
+            )
+            .unwrap();
+        wait(&manager);
+        let snapshot = manager.snapshot();
+        assert_eq!(snapshot.tasks[0].stage, TaskStage::Complete);
+        assert!(
+            fs::read_to_string(root.join(&snapshot.saved[0].files[0].relative))
+                .unwrap()
+                .contains('🎵')
+        );
+        manager.shutdown();
+    }
 }
 #[test]
 fn independent_translation_survives_original_encoding_failure() {
@@ -292,5 +312,16 @@ fn independent_translation_survives_original_encoding_failure() {
         .find(|f| f.relative.to_string_lossy().ends_with(".translated.lrc"))
         .unwrap();
     assert_eq!(translated.fingerprint, before);
+    let mut utf8 = snapshot.tasks[0].options.clone();
+    utf8.encoding = TextEncoding::Utf8;
+    manager
+        .enqueue(vec![common::song(1)], utf8, None, MusicApi::new(2))
+        .unwrap();
+    wait(&manager);
+    let later = manager.snapshot();
+    assert_ne!(
+        later.tasks[1].basename, later.tasks[0].basename,
+        "A preserved GBK file must not count as UTF-8"
+    );
     manager.shutdown();
 }

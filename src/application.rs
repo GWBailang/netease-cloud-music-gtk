@@ -212,6 +212,7 @@ mod imp {
         pub receiver: RefCell<Option<Receiver<Action>>>,
         pub unikey: Arc<RwLock<String>>,
         pub ncmapi: RefCell<Option<NcmClient>>,
+        pub quitting: std::cell::Cell<bool>,
         pub downloads: OnceCell<netease_cloud_music_gtk4::download::manager::DownloadManager>,
         pub download_monitor: OnceCell<gio::VolumeMonitor>,
         pub downloads_page:
@@ -236,6 +237,7 @@ mod imp {
                 receiver,
                 unikey,
                 ncmapi,
+                quitting: std::cell::Cell::new(false),
                 downloads: OnceCell::new(),
                 downloads_page: RefCell::new(None),
                 download_monitor: OnceCell::new(),
@@ -324,6 +326,9 @@ impl NeteaseCloudMusicGtk4Application {
     }
 
     pub fn graceful_quit(&self) {
+        if self.imp().quitting.replace(true) {
+            return;
+        }
         if let Some(manager) = self.imp().downloads.get() {
             manager.shutdown();
         }
@@ -332,7 +337,21 @@ impl NeteaseCloudMusicGtk4Application {
             window.imp().player_controls.save_current_state();
             window.imp().tray_handle.borrow_mut().stop();
         }
-        self.quit();
+        if let Some(manager) = self.imp().downloads.get() {
+            let manager = manager.clone();
+            let (tx, rx) = async_channel::bounded(1);
+            std::thread::spawn(move || {
+                let _ = manager.wait_for_shutdown(Duration::from_secs(20));
+                let _ = tx.send_blocking(());
+            });
+            let app = self.clone();
+            MAINCONTEXT.spawn_local(async move {
+                let _ = rx.recv().await;
+                app.quit();
+            });
+        } else {
+            self.quit();
+        }
     }
 
     fn init_ncmapi(&self, cli: NcmClient) -> NcmClient {
@@ -483,14 +502,42 @@ impl NeteaseCloudMusicGtk4Application {
                             .title(gettext("Choose the storage folder again"))
                             .build();
                         let parent = window.clone();
-                        chooser.select_folder(Some(&parent),None::<&gio::Cancellable>,move|result|{if let Ok(file)=result{if let Some(path)=file.path(){let manager=manager.clone();let client=client.clone();let sender=sender.clone();std::thread::spawn(move ||{let result=netease_cloud_music_gtk4::download_dialog::capture_folder(&path,true,task.options.target.volume_uuid.clone()).and_then(|target|{manager.confirm_location(&task.options.target.id,&target)?;manager.retry(id,client)});if let Err(e)=result{let _=sender.send_blocking(Action::AddToast(e.to_string()));}});}}});
+                        chooser.select_folder(
+                            Some(&parent),
+                            None::<&gio::Cancellable>,
+                            move |result| {
+                                let Ok(file) = result else { return };
+                                let Some(path) = file.path() else { return };
+                                let manager = manager.clone();
+                                let client = client.clone();
+                                let sender = sender.clone();
+                                std::thread::spawn(move || {
+                                    let result =
+                                        netease_cloud_music_gtk4::download_dialog::capture_folder(
+                                            &path,
+                                            true,
+                                            task.options.target.volume_uuid.clone(),
+                                        )
+                                        .and_then(
+                                            |target| {
+                                                manager.retry_confirmed(
+                                                    id,
+                                                    client,
+                                                    utf8,
+                                                    Some((&task.options.target.id, &target)),
+                                                )
+                                            },
+                                        );
+                                    if let Err(e) = result {
+                                        let _ =
+                                            sender.send_blocking(Action::AddToast(e.to_string()));
+                                    }
+                                });
+                            },
+                        );
                     } else {
                         std::thread::spawn(move || {
-                            if let Err(e) = if utf8 {
-                                manager.retry_utf8(id, client)
-                            } else {
-                                manager.retry(id, client)
-                            } {
+                            if let Err(e) = manager.retry_confirmed(id, client, utf8, None) {
                                 let _ = sender.send_blocking(Action::AddToast(e.to_string()));
                             }
                         });

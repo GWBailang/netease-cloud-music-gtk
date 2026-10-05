@@ -77,5 +77,20 @@ fn downloads_and_selection_keep_playback_separate() {
     row.set_activatable(true);
     row.emit_activate();
     assert!(matches!(receiver.try_recv(),Ok(Action::AddPlay(song)) if song.id==123));
+    let quitting = std::rc::Rc::new(std::cell::Cell::new(false));
+    let signal = quitting.clone();
+    crate::window::connect_graceful_close(&window, move || signal.set(true));
+    window.set_hide_on_close(true);
     window.close();
+    assert!(!quitting.get());
+    assert!(!window.is_visible());
+    window.present();
+    window.set_hide_on_close(false);
+    window.close();
+    assert!(quitting.get());
+    assert!(
+        window.is_visible(),
+        "close must wait for asynchronous download shutdown"
+    );
+    window.destroy();
 }

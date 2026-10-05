@@ -476,11 +476,22 @@ fn render_files(root: &gtk::Box, data: &Rc<Data>) {
         check.set_widget_name("selection");
         let key = saved.key.clone();
         let shared = data.clone();
+        let weak = root.downgrade();
+        let count = items.len();
         check.connect_toggled(move |c| {
             if c.is_active() {
                 shared.selected.borrow_mut().insert(key.clone());
             } else {
                 shared.selected.borrow_mut().remove(&key);
+            }
+            if let Some(root) = weak.upgrade() {
+                object::<gtk::Label>(&root, "file_count").set_label(&format!(
+                    "{} {} · {} {}",
+                    count,
+                    gettext("songs"),
+                    shared.selected.borrow().len(),
+                    gettext("selected")
+                ));
             }
         });
         row.add_prefix(&check);

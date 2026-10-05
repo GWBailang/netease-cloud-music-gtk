@@ -146,6 +146,18 @@ mod imp {
             obj.setup_settings();
             obj.bind_settings();
 
+            let weak = obj.downgrade();
+            connect_graceful_close(&*obj, move || {
+                if let Some(window) = weak.upgrade() {
+                    if let Some(app) = window.application().and_then(|a| {
+                        a.downcast::<crate::application::NeteaseCloudMusicGtk4Application>()
+                            .ok()
+                    }) {
+                        app.graceful_quit();
+                    }
+                }
+            });
+
             // 窗口关闭时保存播放列表并清理系统托盘
             obj.connect_close_request(|window| {
                 if !window.imp().graceful_quitting.get() {
@@ -1145,4 +1157,15 @@ impl Default for NeteaseCloudMusicGtk4Window {
             .downcast()
             .unwrap()
     }
+}
+
+/// Keep the last window alive while application shutdown drains download workers.
+pub(crate) fn connect_graceful_close<W: IsA<gtk::Window>>(window: &W, quit: impl Fn() + 'static) {
+    window.connect_close_request(move |window| {
+        if !window.hides_on_close() {
+            quit();
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
 }

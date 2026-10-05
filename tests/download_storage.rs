@@ -6,6 +6,7 @@ fn location(temp: &common::TempDir) -> TargetLocation {
 }
 fn saved(target: TargetLocation, file: StoredFile) -> SavedSong {
     SavedSong {
+        requested_basename: None,
         state: SavedState::Available,
         key: "song".into(),
         location: target,
@@ -199,4 +200,39 @@ fn tracks_owned_temporary_file_before_creating_it() {
     )
     .unwrap();
     assert_eq!(*calls.borrow(), vec![true, false]);
+}
+
+#[test]
+fn trash_execution_keeps_replacement_file() {
+    let temp = common::TempDir::new();
+    let original = temp.0.join("song.mp3");
+    fs::write(&original, b"reviewed").unwrap();
+    let preview = preview_delete(&scan(&location(&temp)).unwrap(), true, true).unwrap();
+    let report = execute_delete_with_trash(&preview, DeleteMode::Trash, |staged| {
+        if original.exists() {
+            fs::rename(&original, temp.0.join("old.mp3"))?;
+        }
+        fs::write(&original, b"replacement")?;
+        fs::remove_file(staged)?;
+        Ok(())
+    });
+    assert!(report.results[0].error.is_none());
+    assert_eq!(fs::read(original).unwrap(), b"replacement");
+}
+#[test]
+fn trash_execution_does_not_follow_replaced_parent() {
+    let temp = common::TempDir::new();
+    let other = common::TempDir::new();
+    fs::create_dir(temp.0.join("album")).unwrap();
+    fs::write(temp.0.join("album/song.mp3"), b"reviewed").unwrap();
+    fs::write(other.0.join("song.mp3"), b"outside").unwrap();
+    let preview = preview_delete(&scan(&location(&temp)).unwrap(), true, true).unwrap();
+    let report = execute_delete_with_trash(&preview, DeleteMode::Trash, |staged| {
+        fs::rename(temp.0.join("album"), temp.0.join("moved"))?;
+        symlink(&other.0, temp.0.join("album"))?;
+        fs::remove_file(staged)?;
+        Ok(())
+    });
+    assert!(report.results[0].error.is_none());
+    assert_eq!(fs::read(other.0.join("song.mp3")).unwrap(), b"outside");
 }

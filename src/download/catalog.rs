@@ -18,6 +18,8 @@ pub struct Catalog {
     pub saved: Vec<SavedSong>,
     pub locations: Vec<TargetLocation>,
     pub pending_cleanup: Vec<CleanupFile>,
+    #[serde(default)]
+    pub local_cleanup: Vec<TargetLocation>,
 }
 impl Default for Catalog {
     fn default() -> Self {
@@ -27,6 +29,7 @@ impl Default for Catalog {
             saved: vec![],
             locations: vec![],
             pending_cleanup: vec![],
+            local_cleanup: vec![],
         }
     }
 }

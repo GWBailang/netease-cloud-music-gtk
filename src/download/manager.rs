@@ -11,6 +11,7 @@ use ncm_api::{MusicApi, SongInfo};
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, Weak,
@@ -84,6 +85,22 @@ fn relative_output(base: &Path, suffix: &str) -> PathBuf {
         suffix
     ))
 }
+fn output_basename(path: &Path) -> PathBuf {
+    let filename = path.file_name().unwrap_or_default().to_string_lossy();
+    let stem = [
+        ".translated.lrc",
+        ".translated.txt",
+        ".translated.srt",
+        ".mp3",
+        ".lrc",
+        ".txt",
+        ".srt",
+    ]
+    .iter()
+    .find_map(|s| filename.strip_suffix(s))
+    .unwrap_or(&filename);
+    path.with_file_name(stem)
+}
 impl DownloadManager {
     pub fn new(data_dir: PathBuf, temp_dir: PathBuf) -> Result<(Self, Receiver<DownloadEvent>)> {
         Self::new_with_backend(data_dir, temp_dir, Arc::new(NetworkBackend))
@@ -100,6 +117,9 @@ impl DownloadManager {
         catalog.pending_cleanup.retain(|f| {
             f.location.removable || storage::cleanup_temporary(&f.location, &f.relative).is_err()
         });
+        catalog
+            .local_cleanup
+            .retain(|location| storage::cleanup_work_directory(location).is_err());
         for task in &mut catalog.tasks {
             if !task.stage.terminal() {
                 task.stage = TaskStage::Interrupted;
@@ -158,6 +178,22 @@ impl DownloadManager {
     ) -> Result<Vec<TaskId>> {
         options.validate()?;
         storage::validate_location(&options.target)?;
+        // Hash saved files outside the queue mutex; slow cards must not block cancel.
+        let verified = self
+            .snapshot()
+            .saved
+            .into_iter()
+            .filter(|saved| {
+                saved.location.id == options.target.id
+                    && saved.files.iter().all(|file| {
+                        storage::fingerprint(&saved.location, &file.relative)
+                            .ok()
+                            .as_ref()
+                            == Some(&file.fingerprint)
+                    })
+            })
+            .map(|saved| (saved.key, (saved.location, saved.files)))
+            .collect::<HashMap<_, _>>();
         let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         ensure!(!state.shutdown, "Download manager is shutting down");
         state.invalid.remove(&options.target.id);
@@ -187,15 +223,6 @@ impl DownloadManager {
             if !seen.insert(song.id) {
                 continue;
             }
-            if let Some(existing) = state.catalog.tasks.iter().find(|t| {
-                t.song_id == song.id
-                    && t.options == options
-                    && !t.stage.terminal()
-                    && t.basename.parent() == Some(Path::new(&folder))
-            }) {
-                ids.push(existing.id);
-                continue;
-            }
             song.song_url.clear();
             let ordinal = collection
                 .as_ref()
@@ -211,6 +238,15 @@ impl DownloadManager {
                 },
             );
             let mut basename = PathBuf::from(&folder).join(&stem);
+            if let Some(existing) = state.catalog.tasks.iter().find(|t| {
+                t.song_id == song.id
+                    && t.options == options
+                    && !t.stage.terminal()
+                    && t.requested_basename.as_ref().unwrap_or(&t.basename) == &basename
+            }) {
+                ids.push(existing.id);
+                continue;
+            }
             let reusable = state
                 .catalog
                 .saved
@@ -219,32 +255,34 @@ impl DownloadManager {
                     saved.location.id == options.target.id
                         && saved.song.as_ref().is_some_and(|s| s.id == song.id)
                         && saved.bitrate == options.bitrate
-                        && saved.encoding == options.encoding
+                        && (!options.content.lyrics()
+                            || saved
+                                .files
+                                .iter()
+                                .filter(|f| f.kind == FileKind::Lyrics)
+                                .all(|f| f.encoding == Some(options.encoding)))
+                        && saved.requested_basename.as_ref().map_or_else(
+                            || {
+                                saved
+                                    .files
+                                    .first()
+                                    .is_some_and(|f| output_basename(&f.relative) == basename)
+                            },
+                            |b| b == &basename,
+                        )
                         && saved.lyric_mode == options.lyric_mode
                         && saved
                             .files
                             .iter()
                             .any(|f| f.relative.parent() == basename.parent())
-                        && saved.files.iter().all(|f| {
-                            storage::fingerprint(&saved.location, &f.relative)
-                                .ok()
-                                .as_ref()
-                                == Some(&f.fingerprint)
+                        && verified.get(&saved.key).is_some_and(|(location, files)| {
+                            location == &saved.location && files == &saved.files
                         })
                 })
                 .cloned();
             if let Some(saved) = &reusable {
                 if let Some(file) = saved.files.first() {
-                    let filename = file
-                        .relative
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    let base = filename
-                        .strip_suffix(".mp3")
-                        .or_else(|| filename.split_once('.').map(|(a, _)| a))
-                        .unwrap_or(&filename);
-                    basename = file.relative.with_file_name(base);
+                    basename = output_basename(&file.relative);
                 }
             } else {
                 let mut attempt = 0;
@@ -305,6 +343,7 @@ impl DownloadManager {
                 song_id: song.id,
                 song: Some(song),
                 options: options.clone(),
+                requested_basename: Some(PathBuf::from(&folder).join(&stem)),
                 basename,
                 stage: if complete {
                     TaskStage::Complete
@@ -344,6 +383,7 @@ impl DownloadManager {
         for item in collection.items.iter().filter(|i| i.song.is_none()) {
             let id = state.catalog.tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
             state.catalog.tasks.push(TaskRecord {
+                requested_basename: None,
                 source_info: None,
                 id,
                 song_id: item.song_id,
@@ -431,19 +471,36 @@ impl DownloadManager {
     pub fn retry_utf8(&self, id: TaskId, client: MusicApi) -> Result<()> {
         self.retry_options(id, client, Some(TextEncoding::Utf8))
     }
+    pub fn retry_confirmed(
+        &self,
+        id: TaskId,
+        client: MusicApi,
+        utf8: bool,
+        confirmation: Option<(&LocationId, &TargetLocation)>,
+    ) -> Result<()> {
+        if let Some((location, target)) = confirmation {
+            self.confirm_location(location, target)?;
+        }
+        if utf8 {
+            self.retry_utf8(id, client)
+        } else {
+            self.retry(id, client)
+        }
+    }
     fn retry_options(
         &self,
         id: TaskId,
         client: MusicApi,
         encoding: Option<TextEncoding>,
     ) -> Result<()> {
-        let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
+        let state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         let task = state
             .catalog
             .tasks
             .iter()
             .find(|t| t.id == id)
-            .ok_or_else(|| anyhow!("Task not found"))?;
+            .ok_or_else(|| anyhow!("Task not found"))?
+            .clone();
         ensure!(
             task.stage.terminal() && !state.busy.contains(&id),
             "Wait for the cancelled worker to stop before retrying"
@@ -452,6 +509,7 @@ impl DownloadManager {
             !state.invalid.contains(&task.options.target.id),
             "Select this save location again before retrying"
         );
+        drop(state);
         storage::validate_location(&task.options.target)?;
         ensure!(
             task.song.is_some(),
@@ -468,6 +526,22 @@ impl DownloadManager {
                 );
             }
         }
+        let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
+        let current = state
+            .catalog
+            .tasks
+            .iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| anyhow!("Task was removed"))?;
+        ensure!(
+            !state.shutdown
+                && !state.busy.contains(&id)
+                && current.stage.terminal()
+                && !state.invalid.contains(&current.options.target.id)
+                && current.options == task.options
+                && current.outputs == task.outputs,
+            "Task changed during file verification; try again"
+        );
         let task = state.catalog.tasks.iter_mut().find(|t| t.id == id).unwrap();
         if let Some(encoding) = encoding {
             task.options.encoding = encoding;
@@ -558,7 +632,15 @@ impl DownloadManager {
                         })
                     });
                 if same_audio {
-                    existing.files = item.files;
+                    let mut files = item.files;
+                    for file in &mut files {
+                        if let Some(known) = existing.files.iter().find(|known| {
+                            known.relative == file.relative && known.fingerprint == file.fingerprint
+                        }) {
+                            file.encoding = known.encoding;
+                        }
+                    }
+                    existing.files = files;
                 } else {
                     let key = existing.key.clone();
                     *existing = item;
@@ -612,27 +694,51 @@ impl DownloadManager {
         Ok(report)
     }
     pub fn refresh_files(&self) -> Result<()> {
+        self.refresh_files_using(|saved| {
+            if storage::validate_location(&saved.location).is_err() {
+                return SavedState::Unavailable;
+            }
+            let mut status = SavedState::Available;
+            for file in &saved.files {
+                match storage::fingerprint(&saved.location, &file.relative) {
+                    Ok(actual) if actual != file.fingerprint => return SavedState::Changed,
+                    Err(_) => status = SavedState::Missing,
+                    _ => {}
+                }
+            }
+            status
+        })
+    }
+    fn refresh_files_using(&self, inspect: impl Fn(&SavedSong) -> SavedState) -> Result<()> {
+        let (saved, invalid) = {
+            let state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
+            (state.catalog.saved.clone(), state.invalid.clone())
+        };
+        let checked = saved
+            .into_iter()
+            .map(|saved| {
+                let status = if invalid.contains(&saved.location.id) {
+                    SavedState::Unavailable
+                } else {
+                    inspect(&saved)
+                };
+                (saved, status)
+            })
+            .collect::<Vec<_>>();
         let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         let invalid = state.invalid.clone();
-        for saved in &mut state.catalog.saved {
-            saved.state = if invalid.contains(&saved.location.id)
-                || storage::validate_location(&saved.location).is_err()
-            {
-                SavedState::Unavailable
-            } else {
-                let mut status = SavedState::Available;
-                for file in &saved.files {
-                    match storage::fingerprint(&saved.location, &file.relative) {
-                        Ok(actual) if actual != file.fingerprint => {
-                            status = SavedState::Changed;
-                            break;
-                        }
-                        Err(_) => status = SavedState::Missing,
-                        _ => {}
-                    }
-                }
-                status
-            };
+        for (previous, status) in checked {
+            if let Some(current) = state.catalog.saved.iter_mut().find(|s| {
+                s.key == previous.key
+                    && s.location == previous.location
+                    && s.files == previous.files
+            }) {
+                current.state = if invalid.contains(&current.location.id) {
+                    SavedState::Unavailable
+                } else {
+                    status
+                };
+            }
         }
         state.catalog.save(&self.core.catalog_path)?;
         let snapshot = state.catalog.snapshot();
@@ -641,12 +747,39 @@ impl DownloadManager {
         Ok(())
     }
     pub fn remove_missing(&self) -> Result<()> {
+        let missing = self
+            .snapshot()
+            .saved
+            .into_iter()
+            .flat_map(|saved| {
+                let valid = storage::validate_location(&saved.location).is_ok();
+                saved.files.into_iter().filter_map(move |file| {
+                    if valid
+                        && saved
+                            .location
+                            .root
+                            .join(&file.relative)
+                            .symlink_metadata()
+                            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                    {
+                        Some((saved.key.clone(), saved.location.clone(), file))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
         let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
-        for saved in &mut state.catalog.saved {
-            if storage::validate_location(&saved.location).is_ok() {
-                saved
-                    .files
-                    .retain(|f| storage::fingerprint(&saved.location, &f.relative).is_ok());
+        for (key, location, file) in missing {
+            if !state.invalid.contains(&location.id) {
+                if let Some(saved) = state
+                    .catalog
+                    .saved
+                    .iter_mut()
+                    .find(|s| s.key == key && s.location == location)
+                {
+                    saved.files.retain(|f| f != &file);
+                }
             }
         }
         state.catalog.saved.retain(|s| !s.files.is_empty());
@@ -655,6 +788,16 @@ impl DownloadManager {
         drop(state);
         self.core.emit(DownloadEvent::Changed(snapshot));
         Ok(())
+    }
+    /// Wait on a background thread; GTK keeps processing events while workers stop.
+    pub fn wait_for_shutdown(&self, timeout: Duration) -> bool {
+        let state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
+        let (state, _) = self
+            .core
+            .wake
+            .wait_timeout_while(state, timeout, |s| !s.busy.is_empty())
+            .unwrap_or_else(|e| e.into_inner());
+        state.busy.is_empty()
     }
     pub fn shutdown(&self) {
         self.core.stop();
@@ -773,7 +916,14 @@ impl Core {
             let id = task.id;
             let outcome =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
-                    fs::create_dir(&temp)?;
+                    fs::DirBuilder::new().mode(0o700).create(&temp)?;
+                    let location = TargetLocation::capture(&temp, false, None, None)?;
+                    {
+                        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                        state.catalog.local_cleanup.push(location);
+                        state.catalog.save(&self.catalog_path)?;
+                    }
+
                     let outputs = self.backend.run(
                         &task,
                         &client,
@@ -830,7 +980,10 @@ impl Core {
                             .find(|o| o.suffix == prepared.suffix)
                         {
                             match result {
-                                Some(Ok(file)) => {
+                                Some(Ok(mut file)) => {
+                                    if file.kind == FileKind::Lyrics {
+                                        file.encoding = Some(record.options.encoding);
+                                    }
                                     output.state = OutputState::Saved;
                                     output.file = Some(file);
                                     output.error = None;
@@ -857,7 +1010,22 @@ impl Core {
                     Ok(())
                 }))
                 .unwrap_or_else(|_| Err(anyhow!("Download worker failed")));
-            let _ = fs::remove_dir_all(&temp);
+            let owned = {
+                let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                state
+                    .catalog
+                    .local_cleanup
+                    .iter()
+                    .find(|l| l.root == temp)
+                    .cloned()
+            };
+            let cleaned = owned
+                .as_ref()
+                .is_some_and(|l| storage::cleanup_work_directory(l).is_ok());
+            if owned.is_none() {
+                let _ = fs::remove_dir(&temp);
+            }
+
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(record) = state.catalog.tasks.iter_mut().find(|t| t.id == id) {
                 if !matches!(record.stage, TaskStage::Cancelled | TaskStage::Interrupted) {
@@ -896,6 +1064,9 @@ impl Core {
                 }
                 self.emit(DownloadEvent::Task(record.clone()));
             }
+            if cleaned {
+                state.catalog.local_cleanup.retain(|l| l.root != temp);
+            }
             state.busy.remove(&id);
             state.clients.remove(&id);
             state.cancelled.remove(&id);
@@ -904,6 +1075,7 @@ impl Core {
                 self.emit(DownloadEvent::Error(e.to_string()));
             }
             self.emit(DownloadEvent::Changed(state.catalog.snapshot()));
+            self.wake.notify_all();
         }
     }
     fn index_outputs(&self, catalog: &mut Catalog, task: &TaskRecord) {
@@ -922,7 +1094,6 @@ impl Core {
             .map(|s| format!("{} - {}", s.singer, s.name))
             .unwrap_or_else(|| task.song_id.to_string());
         if let Some(saved) = catalog.saved.iter_mut().find(|s| s.key == key) {
-            saved.encoding = task.options.encoding;
             saved.state = SavedState::Available;
             for file in files {
                 if !saved.files.iter().any(|f| f.relative == file.relative) {
@@ -931,6 +1102,7 @@ impl Core {
             }
         } else {
             catalog.saved.push(SavedSong {
+                requested_basename: task.requested_basename.clone(),
                 state: SavedState::Available,
                 key,
                 location: task.options.target.clone(),
@@ -943,5 +1115,50 @@ impl Core {
                 imported: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod responsiveness_tests {
+    use super::*;
+    #[test]
+    fn slow_file_refresh_does_not_block_snapshot_or_cancellation() {
+        let root = std::env::temp_dir().join(format!("ncm-refresh-{}", fastrand::u64(..)));
+        fs::create_dir_all(root.join("output")).unwrap();
+        fs::write(root.join("output/song.mp3"), b"file").unwrap();
+        let (manager, _) = DownloadManager::new(root.join("catalog"), root.join("cache")).unwrap();
+        let target = TargetLocation::capture(&root.join("output"), false, None, None).unwrap();
+        manager
+            .import_files(target.clone(), storage::scan(&target).unwrap())
+            .unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let refreshing = manager.clone();
+        let worker = std::thread::spawn(move || {
+            refreshing
+                .refresh_files_using(|_| {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    SavedState::Available
+                })
+                .unwrap()
+        });
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let responsive = manager.clone();
+        let check = std::thread::spawn(move || {
+            responsive.cancel(99);
+            tx.send(responsive.snapshot()).unwrap();
+        });
+        let result = rx.recv_timeout(Duration::from_millis(200));
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        check.join().unwrap();
+        manager.shutdown();
+        fs::remove_dir_all(root).unwrap();
+        assert!(
+            result.is_ok(),
+            "slow filesystem checks held the global state mutex"
+        );
     }
 }

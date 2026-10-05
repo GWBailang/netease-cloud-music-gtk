@@ -1,6 +1,6 @@
 use super::model::*;
 use anyhow::{Result, anyhow, ensure};
-use gtk::{gio, glib, prelude::*};
+use gtk::glib;
 use rustix::fs::{self as rfs, AtFlags, Mode, OFlags, RenameFlags};
 use std::{
     collections::HashSet,
@@ -135,7 +135,7 @@ pub fn fingerprint(target: &TargetLocation, relative: &Path) -> Result<Fingerpri
     let file = rfs::openat(
         &parent,
         &name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
     )?
     .into();
@@ -215,6 +215,7 @@ pub fn commit_file_tracked(
         FileKind::Lyrics
     };
     Ok(StoredFile {
+        encoding: None,
         relative: relative.into(),
         kind,
         fingerprint: fingerprint(target, relative)?,
@@ -262,6 +263,7 @@ fn scan_dir(target: &TargetLocation, relative: &Path, result: &mut Vec<SavedSong
             .to_string_lossy()
             .into_owned();
         let mut files = vec![StoredFile {
+            encoding: None,
             relative: path.clone(),
             kind: FileKind::Audio,
             fingerprint: fingerprint(target, &path)?,
@@ -277,6 +279,7 @@ fn scan_dir(target: &TargetLocation, relative: &Path, result: &mut Vec<SavedSong
             let lyric = path.with_file_name(format!("{stem}.{suffix}"));
             if let Ok(fp) = fingerprint(target, &lyric) {
                 files.push(StoredFile {
+                    encoding: None,
                     relative: lyric,
                     kind: FileKind::Lyrics,
                     fingerprint: fp,
@@ -298,6 +301,7 @@ fn scan_dir(target: &TargetLocation, relative: &Path, result: &mut Vec<SavedSong
             })
             .unwrap_or(stem);
         result.push(SavedSong {
+            requested_basename: None,
             state: SavedState::Available,
             key: format!("{}:{}", target.id, path.display()),
             location: target.clone(),
@@ -343,32 +347,102 @@ pub fn preview_delete(
     Ok(preview)
 }
 pub fn execute_delete(preview: &DeletePreview, mode: DeleteMode) -> DeleteReport {
-    execute_delete_with_trash(preview, mode, |path| {
-        gio::File::for_path(path).trash(None::<&gio::Cancellable>)?;
-        Ok(())
-    })
+    execute_delete_impl(
+        preview,
+        mode,
+        |staged, item| secure_trash(staged, item),
+        |_| Ok(()),
+    )
 }
 pub fn execute_delete_with_trash(
     preview: &DeletePreview,
     mode: DeleteMode,
     trash: impl Fn(&Path) -> Result<()>,
 ) -> DeleteReport {
+    execute_delete_impl(preview, mode, |staged, _| trash(staged), |_| Ok(()))
+}
+fn execute_delete_impl(
+    preview: &DeletePreview,
+    mode: DeleteMode,
+    trash: impl Fn(&Path, &DeleteItem) -> Result<()>,
+    before_stage: impl Fn(&DeleteItem) -> Result<()>,
+) -> DeleteReport {
     let results = preview
         .items
         .iter()
         .map(|item| {
             let result = (|| -> Result<()> {
+                let (parent, name) = open_parent(&item.location, &item.file.relative, false)?;
                 ensure!(
                     fingerprint(&item.location, &item.file.relative)? == item.file.fingerprint,
                     "File has changed; refresh and review it again"
                 );
-                let (parent, name) = open_parent(&item.location, &item.file.relative, false)?;
-                match mode {
-                    DeleteMode::Trash => trash(&item.location.root.join(&item.file.relative))?,
-                    DeleteMode::Permanent => {
-                        rfs::unlinkat(&parent, &name, AtFlags::empty())?;
+                before_stage(item)?;
+                let (current, _) = open_parent(&item.location, &item.file.relative, false)?;
+                ensure!(
+                    current.metadata()?.ino() == parent.metadata()?.ino(),
+                    "Directory has changed"
+                );
+                // Move into a private directory using the verified parent descriptor. Recheck
+                // the actual moved file before any destructive operation, never a reopened path.
+                let staging_name = format!(".ncm-delete-{}", fastrand::u64(..));
+                rfs::mkdirat(&parent, &staging_name, Mode::RUSR | Mode::WUSR | Mode::XUSR)?;
+                let staging: File = rfs::openat(
+                    &parent,
+                    &staging_name,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )?
+                .into();
+                let moved = (|| -> Result<()> {
+                    ensure!(
+                        staging.metadata()?.mode() & 0o022 == 0
+                            && staging.metadata()?.uid() == rustix::process::geteuid().as_raw(),
+                        "Deletion staging is writable by another user"
+                    );
+                    rfs::renameat_with(&parent, &name, &staging, &name, RenameFlags::NOREPLACE)?;
+                    let file: File = rfs::openat(
+                        &staging,
+                        &name,
+                        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                        Mode::empty(),
+                    )?
+                    .into();
+                    ensure!(
+                        fingerprint_file(file)? == item.file.fingerprint,
+                        "File was replaced during deletion"
+                    );
+                    match mode {
+                        DeleteMode::Permanent => rfs::unlinkat(&staging, &name, AtFlags::empty())?,
+                        DeleteMode::Trash => trash(
+                            &Path::new(&format!("/proc/self/fd/{}", staging.as_raw_fd()))
+                                .join(&name),
+                            item,
+                        )?,
                     }
+                    let _ = staging.sync_all();
+                    let _ = parent.sync_all();
+                    Ok(())
+                })();
+                if let Err(error) = moved {
+                    // A failed trash/revalidation must never erase a file or overwrite a new copy.
+                    let restored =
+                        rfs::renameat_with(&staging, &name, &parent, &name, RenameFlags::NOREPLACE);
+                    let empty = rfs::unlinkat(&parent, &staging_name, AtFlags::REMOVEDIR).is_ok();
+                    if restored.is_err() && !empty {
+                        return Err(anyhow!(
+                            "{error}; preserved in {}/{}",
+                            item.location
+                                .root
+                                .join(item.file.relative.parent().unwrap_or(Path::new("")))
+                                .join(&staging_name)
+                                .display(),
+                            name.to_string_lossy()
+                        ));
+                    }
+                    return Err(error);
                 }
+                let _ = rfs::unlinkat(&parent, &staging_name, AtFlags::REMOVEDIR);
                 Ok(())
             })();
             DeleteResult {
@@ -378,6 +452,215 @@ pub fn execute_delete_with_trash(
         })
         .collect();
     DeleteReport { results }
+}
+
+// Descriptor-based Freedesktop Trash: GIO's path-based move would reopen a
+// mutable parent. Preserve the original path in .trashinfo and rename the staged
+// inode directly into the same filesystem's Trash instead.
+fn secure_trash(staged: &Path, item: &DeleteItem) -> Result<()> {
+    let data = glib::user_data_dir();
+    fs::create_dir_all(&data)?;
+    let home = fs::metadata(&data)?.dev() == item.location.filesystem_id;
+    let mut top = item.location.root.clone();
+    if !home {
+        while let Some(parent) = top.parent() {
+            if fs::metadata(parent)?.dev() != item.location.filesystem_id {
+                break;
+            }
+            top = parent.to_path_buf();
+        }
+    }
+    let uid = rustix::process::geteuid().as_raw();
+    let trash_path = if home {
+        data.join("Trash")
+    } else {
+        let common = top.join(".Trash");
+        if fs::symlink_metadata(&common)
+            .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink() && m.mode() & 0o1000 != 0)
+        {
+            common.join(uid.to_string())
+        } else {
+            top.join(format!(".Trash-{uid}"))
+        }
+    };
+    let original = item.location.root.join(&item.file.relative);
+    let path = if home {
+        original.as_path()
+    } else {
+        original.strip_prefix(&top)?
+    };
+    secure_trash_at(staged, &trash_path, path)
+}
+fn secure_trash_at(staged: &Path, trash_path: &Path, original: &Path) -> Result<()> {
+    let uid = rustix::process::geteuid().as_raw();
+    let base = TargetLocation::capture(
+        trash_path
+            .parent()
+            .ok_or_else(|| anyhow!("Trash unavailable"))?,
+        false,
+        None,
+        None,
+    )?;
+    let dir_name = trash_path
+        .file_name()
+        .ok_or_else(|| anyhow!("Trash unavailable"))?;
+    let (parent, _) = open_parent(&base, Path::new(dir_name), false)?;
+    match rfs::mkdirat(&parent, dir_name, Mode::RUSR | Mode::WUSR | Mode::XUSR) {
+        Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+        Err(e) => return Err(e.into()),
+    }
+    let trash: File = rfs::openat(
+        &parent,
+        dir_name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?
+    .into();
+    ensure!(
+        trash.metadata()?.uid() == uid && trash.metadata()?.mode() & 0o077 == 0,
+        "Trash directory is not private"
+    );
+    let child = |name: &str| -> Result<File> {
+        match rfs::mkdirat(&trash, name, Mode::RUSR | Mode::WUSR | Mode::XUSR) {
+            Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+            Err(e) => return Err(e.into()),
+        }
+        let file: File = rfs::openat(
+            &trash,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?
+        .into();
+        ensure!(
+            file.metadata()?.uid() == uid && file.metadata()?.mode() & 0o077 == 0,
+            "Trash subdirectory is not private"
+        );
+        Ok(file)
+    };
+    let files = child("files")?;
+    let info = child("info")?;
+    let unique = format!(
+        "ncm-{}-{}",
+        fastrand::u64(..),
+        original.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let info_name = format!("{unique}.trashinfo");
+    let mut record: File = rfs::openat(
+        &info,
+        &info_name,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+    )?
+    .into();
+    let path = original;
+    use std::os::unix::ffi::OsStrExt;
+    let encoded: String = path
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"/-_.~".contains(b) {
+                (*b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    let result = (|| -> Result<()> {
+        writeln!(
+            record,
+            "[Trash Info]\nPath={encoded}\nDeletionDate={}",
+            chrono::Local::now().format("%Y-%m-%dT%H:%M:%S")
+        )?;
+        record.sync_all()?;
+        let source: File = File::open(
+            staged
+                .parent()
+                .ok_or_else(|| anyhow!("Missing staged parent"))?,
+        )?;
+        rfs::renameat_with(
+            &source,
+            staged.file_name().unwrap(),
+            &files,
+            &unique,
+            RenameFlags::NOREPLACE,
+        )?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = rfs::unlinkat(&info, &info_name, AtFlags::empty());
+    }
+    result?;
+    // Rename is the commit point; post-commit fsync failure must not cause a restore
+    // or report the file as still present at the original location.
+    let _ = files.sync_all();
+    let _ = info.sync_all();
+    let _ = trash.sync_all();
+    Ok(())
+}
+
+#[cfg(test)]
+mod deletion_race_tests {
+    use super::*;
+    #[test]
+    fn trash_moves_verified_inode_and_records_original_path() {
+        let root = std::env::temp_dir().join(format!("ncm-trash-{}", fastrand::u64(..)));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("Song 中文.mp3");
+        fs::write(&path, b"reviewed audio").unwrap();
+        let target = TargetLocation::capture(&root, false, None, None).unwrap();
+        let preview = preview_delete(&scan(&target).unwrap(), true, true).unwrap();
+        let report = execute_delete_impl(
+            &preview,
+            DeleteMode::Trash,
+            |staged, _| secure_trash_at(staged, &root.join("Trash"), &path),
+            |_| Ok(()),
+        );
+        assert!(
+            report.results[0].error.is_none(),
+            "{:?}",
+            report.results[0].error
+        );
+        assert!(!path.exists());
+        let contents = fs::read_dir(root.join("Trash/files"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(fs::read(contents).unwrap(), b"reviewed audio");
+        let info = fs::read_dir(root.join("Trash/info"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let text = fs::read_to_string(info).unwrap();
+        assert!(text.contains("Song%20%E4%B8%AD%E6%96%87.mp3") && text.contains("DeletionDate="));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn permanent_delete_preserves_replacement_between_verification_and_staging() {
+        let root = std::env::temp_dir().join(format!("ncm-delete-race-{}", fastrand::u64(..)));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("song.mp3"), b"original").unwrap();
+        let target = TargetLocation::capture(&root, false, None, None).unwrap();
+        let preview = preview_delete(&scan(&target).unwrap(), true, true).unwrap();
+        let report = execute_delete_impl(
+            &preview,
+            DeleteMode::Permanent,
+            |_, _| Ok(()),
+            |_| {
+                fs::rename(root.join("song.mp3"), root.join("old.mp3"))?;
+                fs::write(root.join("song.mp3"), b"replacement")?;
+                Ok(())
+            },
+        );
+        assert!(report.results[0].error.is_some());
+        assert_eq!(fs::read(root.join("song.mp3")).unwrap(), b"replacement");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 /// Remove only a specific journalled temporary name from a validated location.
@@ -396,7 +679,7 @@ pub fn cleanup_temporary(target: &TargetLocation, relative: &Path) -> Result<()>
     match rfs::openat(
         &parent,
         &name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
     ) {
         Err(rustix::io::Errno::NOENT) => return Ok(()),
@@ -410,6 +693,73 @@ pub fn cleanup_temporary(target: &TargetLocation, relative: &Path) -> Result<()>
         }
     }
     rfs::unlinkat(&parent, &name, AtFlags::empty())?;
+    parent.sync_all()?;
+    Ok(())
+}
+
+/// Recover only an inode-identified work directory recorded before media writes.
+/// Unknown files or nested directories are retained for manual inspection.
+pub fn cleanup_work_directory(target: &TargetLocation) -> Result<()> {
+    if target
+        .root
+        .symlink_metadata()
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    {
+        return Ok(());
+    }
+    validate_location(target)?;
+    let name = target
+        .root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow!("Invalid work directory"))?;
+    let parts = name.split('-').collect::<Vec<_>>();
+    ensure!(
+        parts.len() == 3
+            && parts[0] == "task"
+            && parts[1].parse::<u64>().is_ok()
+            && parts[2].parse::<u64>().is_ok(),
+        "Not an owned work directory"
+    );
+    let (directory, _) = open_parent(target, Path::new(".cleanup"), false)?;
+    let entries = fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    for entry in &entries {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let known = matches!(name.as_ref(), "source" | "audio.mp3")
+            || ["lyrics", "prepared"].iter().any(|prefix| {
+                name.strip_prefix(prefix).is_some_and(|suffix| {
+                    [
+                        ".mp3",
+                        ".lrc",
+                        ".txt",
+                        ".srt",
+                        ".translated.lrc",
+                        ".translated.txt",
+                        ".translated.srt",
+                    ]
+                    .contains(&suffix)
+                })
+            });
+        ensure!(
+            known && entry.file_type()?.is_file(),
+            "Work directory contains an unrecognized file; retained for inspection"
+        );
+    }
+    for entry in entries {
+        rfs::unlinkat(&directory, entry.file_name(), AtFlags::empty())?;
+    }
+    directory.sync_all()?;
+    let parent_path = target
+        .root
+        .parent()
+        .ok_or_else(|| anyhow!("Missing work parent"))?;
+    let parent_target = TargetLocation::capture(parent_path, false, None, None)?;
+    let (parent, name) = open_parent(&parent_target, Path::new(name), false)?;
+    // Check the directory identity once more before removing the empty directory.
+    validate_location(target)?;
+    rfs::unlinkat(&parent, &name, AtFlags::REMOVEDIR)?;
     parent.sync_all()?;
     Ok(())
 }
