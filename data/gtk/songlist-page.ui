@@ -59,7 +59,7 @@
                                         </child>
                                         <child>
                                             <object class="GtkLabel" id="time_label">
-                                                <property name="label"></property>
+                                                <property name="label" />
                                                 <property name="halign">start</property>
                                                 <property name="valign">end</property>
                                                 <property name="visible">False</property>
@@ -75,17 +75,17 @@
                                     </object>
                                 </child>
                                 <child>
-                                    <object class="GtkBox">
-                                        <property name="halign">fill</property>
+                                    <object class="GtkBox" id="playlist_actions">
+                                        <property name="hexpand">true</property>
+                                        <property name="halign">end</property>
                                         <property name="valign">end</property>
                                         <property name="spacing">7</property>
                                         <property name="orientation">horizontal</property>
-                                        <child><object class="GtkButton" id="download_all"><property name="icon-name">folder-download-symbolic</property><property name="tooltip-text" translatable="yes">Download all songs</property><signal name="clicked" handler="download_all_clicked_cb" swapped="true"/><style><class name="flat"/></style></object></child>
-<child>
+                                        <child>
                                             <object class="GtkButton" id="play_button">
                                                 <property name="halign">end</property>
                                                 <property name="valign">center</property>
-                                                <property name="hexpand">true</property>
+                                                <property name="hexpand">false</property>
                                                 <property name="icon-name">media-playback-start-symbolic</property>
                                                 <signal name="clicked" handler="play_button_clicked_cb" swapped="true" />
                                                 <property name="tooltip-text" translatable="yes">Play songs list</property>
@@ -101,6 +101,18 @@
                                                 <property name="icon-name">non-starred-symbolic</property>
                                                 <signal name="clicked" handler="like_button_clicked_cb" swapped="true" />
                                                 <property name="tooltip-text" translatable="yes">Like songs list</property>
+                                                <style>
+                                                    <class name="circular" />
+                                                </style>
+                                            </object>
+                                        </child>
+                                        <child>
+                                            <object class="GtkButton" id="download_all">
+                                                <property name="valign">center</property>
+                                                <property name="halign">end</property>
+                                                <property name="icon-name">folder-download-symbolic</property>
+                                                <property name="tooltip-text" translatable="yes">Download all songs</property>
+                                                <signal name="clicked" handler="download_all_clicked_cb" swapped="true" />
                                                 <style>
                                                     <class name="circular" />
                                                 </style>
@@ -129,7 +141,7 @@
         <child>
             <object class="GtkOverlay">
                 <child>
-                    <object class="SongListView" id="songs_list"></object>
+                    <object class="SongListView" id="songs_list" />
                 </child>
                 <child type="overlay">
                     <object class="GtkSpinner" id="loading_spinner">
