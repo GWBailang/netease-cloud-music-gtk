@@ -471,13 +471,15 @@ impl NeteaseCloudMusicGtk4Application {
                         let sender = sender.clone();
                         std::thread::spawn(move || {
                             let result = if let Some(collection) = collection {
-                                manager.enqueue_collection(collection, options, client)
+                                manager.enqueue_collection_with_report(collection, options, client)
                             } else {
-                                manager.enqueue(songs, options, None, client)
+                                manager.enqueue_with_report(songs, options, None, client)
                             };
                             let text = match result {
-                                Ok(ids) => {
-                                    format!("{}: {}", gettext("Added to download queue"), ids.len())
+                                Ok(report) => {
+                                    netease_cloud_music_gtk4::downloads_page::enqueue_notice(
+                                        &report,
+                                    )
                                 }
                                 Err(e) => e.to_string(),
                             };

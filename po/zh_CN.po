@@ -1001,3 +1001,15 @@ msgstr "暂无保存的文件"
 
 msgid "Download songs or scan a folder to manage existing MP3 files"
 msgstr "下载歌曲，或扫描目录以管理已有 MP3 文件"
+
+#: src/gui/downloads_page.rs
+msgid "Already saved; skipped duplicate downloads"
+msgstr "已保存，跳过重复下载"
+
+#: src/gui/downloads_page.rs
+msgid "Already in download queue"
+msgstr "已在下载队列中"
+
+#: src/gui/downloads_page.rs
+msgid "Unavailable songs"
+msgstr "无法获取的歌曲"

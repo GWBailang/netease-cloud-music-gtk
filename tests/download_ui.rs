@@ -198,6 +198,26 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     gettextrs::bindtextdomain("netease-cloud-music-gtk4", &locale_dir).unwrap();
     gettextrs::textdomain("netease-cloud-music-gtk4").unwrap();
     gettextrs::setlocale(gettextrs::LocaleCategory::LcAll, "zh_CN.UTF-8").unwrap();
+    let saved_notice = netease_cloud_music_gtk4::downloads_page::enqueue_notice(
+        &netease_cloud_music_gtk4::download::manager::EnqueueReport {
+            already_saved: 1,
+            ..Default::default()
+        },
+    );
+    assert_eq!(saved_notice, "已保存，跳过重复下载: 1");
+    let mixed_notice = netease_cloud_music_gtk4::downloads_page::enqueue_notice(
+        &netease_cloud_music_gtk4::download::manager::EnqueueReport {
+            queued: 2,
+            already_saved: 3,
+            already_queued: 4,
+            unavailable: 1,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        mixed_notice,
+        "已加入下载队列: 2 · 已保存，跳过重复下载: 3 · 已在下载队列中: 4 · 无法获取的歌曲: 1"
+    );
     let chinese = DownloadDialog::new(DownloadPreferences::default(), 2, None);
     assert_eq!(
         chinese

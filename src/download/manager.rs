@@ -51,6 +51,14 @@ pub struct DownloadManager {
     core: Arc<Core>,
     _lifetime: Arc<Lifetime>,
 }
+#[derive(Debug, Default)]
+pub struct EnqueueReport {
+    pub task_ids: Vec<TaskId>,
+    pub queued: usize,
+    pub already_saved: usize,
+    pub already_queued: usize,
+    pub unavailable: usize,
+}
 impl std::fmt::Debug for DownloadManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("DownloadManager")
@@ -176,6 +184,16 @@ impl DownloadManager {
         collection: Option<CollectionSnapshot>,
         client: MusicApi,
     ) -> Result<Vec<TaskId>> {
+        self.enqueue_with_report(songs, options, collection, client)
+            .map(|report| report.task_ids)
+    }
+    pub fn enqueue_with_report(
+        &self,
+        songs: Vec<SongInfo>,
+        options: DownloadOptions,
+        collection: Option<CollectionSnapshot>,
+        client: MusicApi,
+    ) -> Result<EnqueueReport> {
         options.validate()?;
         storage::validate_location(&options.target)?;
         // Hash saved files outside the queue mutex; slow cards must not block cancel.
@@ -213,7 +231,7 @@ impl DownloadManager {
         } else {
             String::new()
         };
-        let mut ids = Vec::new();
+        let mut report = EnqueueReport::default();
         let mut seen = HashSet::new();
         let total = collection
             .as_ref()
@@ -244,7 +262,8 @@ impl DownloadManager {
                     && !t.stage.terminal()
                     && t.requested_basename.as_ref().unwrap_or(&t.basename) == &basename
             }) {
-                ids.push(existing.id);
+                report.task_ids.push(existing.id);
+                report.already_queued += 1;
                 continue;
             }
             let reusable = state
@@ -337,6 +356,11 @@ impl DownloadManager {
                 .collect::<Vec<_>>();
             let id = state.catalog.tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
             let complete = outputs.iter().all(|o| o.state == OutputState::Skipped);
+            if complete {
+                report.already_saved += 1;
+            } else {
+                report.queued += 1;
+            }
             state.catalog.tasks.push(TaskRecord {
                 source_info: None,
                 id,
@@ -358,14 +382,14 @@ impl DownloadManager {
                 state.clients.insert(id, client.clone());
                 state.cancelled.insert(id, Arc::new(AtomicBool::new(false)));
             }
-            ids.push(id);
+            report.task_ids.push(id);
         }
         state.catalog.save(&self.core.catalog_path)?;
         let snapshot = state.catalog.snapshot();
         drop(state);
         self.core.emit(DownloadEvent::Changed(snapshot));
         self.core.wake.notify_all();
-        Ok(ids)
+        Ok(report)
     }
     pub fn enqueue_collection(
         &self,
@@ -373,12 +397,22 @@ impl DownloadManager {
         options: DownloadOptions,
         client: MusicApi,
     ) -> Result<Vec<TaskId>> {
+        self.enqueue_collection_with_report(collection, options, client)
+            .map(|report| report.task_ids)
+    }
+    pub fn enqueue_collection_with_report(
+        &self,
+        collection: CollectionSnapshot,
+        options: DownloadOptions,
+        client: MusicApi,
+    ) -> Result<EnqueueReport> {
         let songs = collection
             .items
             .iter()
             .filter_map(|i| i.song.clone())
             .collect();
-        let mut ids = self.enqueue(songs, options.clone(), Some(collection.clone()), client)?;
+        let mut report =
+            self.enqueue_with_report(songs, options.clone(), Some(collection.clone()), client)?;
         let mut state = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         for item in collection.items.iter().filter(|i| i.song.is_none()) {
             let id = state.catalog.tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
@@ -395,13 +429,14 @@ impl DownloadManager {
                 error: item.error.clone(),
                 outputs: vec![],
             });
-            ids.push(id);
+            report.task_ids.push(id);
+            report.unavailable += 1;
         }
         state.catalog.save(&self.core.catalog_path)?;
         let snapshot = state.catalog.snapshot();
         drop(state);
         self.core.emit(DownloadEvent::Changed(snapshot));
-        Ok(ids)
+        Ok(report)
     }
     pub fn confirm_location(&self, id: &LocationId, target: &TargetLocation) -> Result<()> {
         storage::validate_location(target)?;

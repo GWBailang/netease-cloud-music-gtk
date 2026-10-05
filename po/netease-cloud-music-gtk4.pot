@@ -992,3 +992,15 @@ msgstr ""
 
 msgid "Download songs or scan a folder to manage existing MP3 files"
 msgstr ""
+
+#: src/gui/downloads_page.rs
+msgid "Already saved; skipped duplicate downloads"
+msgstr ""
+
+#: src/gui/downloads_page.rs
+msgid "Already in download queue"
+msgstr ""
+
+#: src/gui/downloads_page.rs
+msgid "Unavailable songs"
+msgstr ""

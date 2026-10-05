@@ -481,3 +481,134 @@ fn shutdown_waits_for_worker_and_cleans_local_audio() {
     );
     assert!(manager.snapshot().saved.is_empty());
 }
+
+#[test]
+fn repeated_saved_download_reports_skipped_instead_of_queued() {
+    let (_temp, manager, _, options) = setup(Backend::new(0));
+    let client = MusicApi::new(2);
+    manager
+        .enqueue(vec![common::song(1)], options.clone(), None, client.clone())
+        .unwrap();
+    wait(&manager);
+    let report = manager
+        .enqueue_with_report(vec![common::song(1)], options, None, client)
+        .unwrap();
+    assert_eq!(
+        (report.queued, report.already_saved, report.already_queued),
+        (0, 1, 0)
+    );
+    let notice = netease_cloud_music_gtk4::downloads_page::enqueue_notice(&report);
+    assert!(
+        notice.contains("Already saved; skipped duplicate downloads: 1"),
+        "{notice}"
+    );
+    assert!(!notice.contains("Added to download queue"), "{notice}");
+    assert_eq!(manager.snapshot().saved.len(), 1);
+    manager.shutdown();
+}
+
+#[test]
+fn repeated_active_download_reports_existing_queue_entry() {
+    let (_temp, manager, _, options) = setup(Backend::new(200));
+    let client = MusicApi::new(2);
+    manager
+        .enqueue(vec![common::song(1)], options.clone(), None, client.clone())
+        .unwrap();
+    let report = manager
+        .enqueue_with_report(vec![common::song(1)], options, None, client)
+        .unwrap();
+    assert_eq!(
+        (report.queued, report.already_saved, report.already_queued),
+        (0, 0, 1)
+    );
+    let notice = netease_cloud_music_gtk4::downloads_page::enqueue_notice(&report);
+    assert!(notice.contains("Already in download queue: 1"), "{notice}");
+    assert!(!notice.contains("Added to download queue"), "{notice}");
+    assert_eq!(manager.snapshot().tasks.len(), 1);
+    manager.shutdown();
+}
+
+#[test]
+fn mixed_download_reports_new_saved_and_missing_collection_items_separately() {
+    let (_temp, manager, _, mut options) = setup(Backend::new(0));
+    options.collection_folder = false;
+    let client = MusicApi::new(2);
+    manager
+        .enqueue(vec![common::song(1)], options.clone(), None, client.clone())
+        .unwrap();
+    wait(&manager);
+    let collection = CollectionSnapshot {
+        id: 1,
+        name: "mixed".into(),
+        kind: "playlist".into(),
+        duplicates: 0,
+        items: vec![
+            CollectionItem {
+                song_id: 1,
+                song: Some(common::song(1)),
+                error: None,
+            },
+            CollectionItem {
+                song_id: 2,
+                song: Some(common::song(2)),
+                error: None,
+            },
+            CollectionItem {
+                song_id: 3,
+                song: None,
+                error: Some("Unavailable".into()),
+            },
+        ],
+    };
+    let report = manager
+        .enqueue_collection_with_report(collection, options, client)
+        .unwrap();
+    assert_eq!(
+        (
+            report.queued,
+            report.already_saved,
+            report.already_queued,
+            report.unavailable
+        ),
+        (1, 1, 0, 1)
+    );
+    manager.shutdown();
+}
+
+#[test]
+fn adding_missing_lyrics_is_reported_as_new_work() {
+    let (_temp, manager, _, mut options) = setup(Backend::new(0));
+    let client = MusicApi::new(2);
+    options.content = DownloadContent::Audio;
+    manager
+        .enqueue(vec![common::song(1)], options.clone(), None, client.clone())
+        .unwrap();
+    wait(&manager);
+    options.content = DownloadContent::AudioAndLyrics;
+    let report = manager
+        .enqueue_with_report(vec![common::song(1)], options, None, client)
+        .unwrap();
+    assert_eq!(
+        (report.queued, report.already_saved, report.already_queued),
+        (1, 0, 0)
+    );
+    wait(&manager);
+    let task = manager.snapshot().tasks.last().unwrap().clone();
+    assert_eq!(
+        task.outputs
+            .iter()
+            .find(|o| o.suffix == ".mp3")
+            .unwrap()
+            .state,
+        OutputState::Skipped
+    );
+    assert_eq!(
+        task.outputs
+            .iter()
+            .find(|o| o.suffix == ".lrc")
+            .unwrap()
+            .state,
+        OutputState::Saved
+    );
+    manager.shutdown();
+}

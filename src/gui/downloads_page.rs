@@ -1,4 +1,8 @@
-use crate::download::{manager::DownloadManager, model::*, storage};
+use crate::download::{
+    manager::{DownloadManager, EnqueueReport},
+    model::*,
+    storage,
+};
 use crate::download_dialog::capture_folder;
 use adw::prelude::*;
 use gettextrs::gettext;
@@ -8,6 +12,27 @@ use std::{
     collections::{HashMap, HashSet},
     rc::Rc,
 };
+
+pub fn enqueue_notice(report: &EnqueueReport) -> String {
+    let parts = [
+        (report.queued, gettext("Added to download queue")),
+        (
+            report.already_saved,
+            gettext("Already saved; skipped duplicate downloads"),
+        ),
+        (report.already_queued, gettext("Already in download queue")),
+        (report.unavailable, gettext("Unavailable songs")),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, label)| format!("{label}: {count}"))
+    .collect::<Vec<_>>();
+    if parts.is_empty() {
+        gettext("No songs to download")
+    } else {
+        parts.join(" · ")
+    }
+}
 
 type Retry = Box<dyn Fn(TaskId)>;
 struct Data {
