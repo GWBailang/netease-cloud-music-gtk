@@ -111,3 +111,102 @@ fn cancelled_stream_never_succeeds() {
     assert!(result.is_err());
     assert!(cancel.load(Ordering::Relaxed));
 }
+
+#[test]
+fn song_detail_request_ids_are_json_and_preserve_large_ids() {
+    let query = MusicApi::song_detail_ids(&[3422762511, 3411982875]);
+    let parsed: serde_json::Value = serde_json::from_str(&query)
+        .expect("song-detail c parameter must be a JSON array, without extra escaping");
+    assert_eq!(
+        parsed,
+        serde_json::json!([{"id":3422762511u64},{"id":3411982875u64}])
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&MusicApi::song_detail_ids(&[])).unwrap(),
+        serde_json::json!([])
+    );
+}
+
+#[test]
+#[ignore = "manual: needs NCM_READONLY_COOKIE_FILE; downloads into temporary directories"]
+fn live_reported_songs_have_verifiable_download_resources() {
+    let cookie_path = std::env::var("NCM_READONLY_COOKIE_FILE")
+        .expect("set NCM_READONLY_COOKIE_FILE to the existing application cookie file");
+    let file = std::fs::File::open(cookie_path).unwrap();
+    let store = cookie_store::serde::json::load(std::io::BufReader::new(file)).unwrap();
+    let jar = ncm_api::CookieJar::default();
+    for base in [
+        "https://music.163.com/",
+        "https://music.163.com/eapi/clientlog",
+        "https://music.163.com/eapi/feedback",
+        "https://music.163.com/api/clientlog",
+        "https://music.163.com/api/feedback",
+        "https://music.163.com/neapi/clientlog",
+        "https://music.163.com/neapi/feedback",
+        "https://music.163.com/weapi/clientlog",
+        "https://music.163.com/weapi/feedback",
+        "https://music.163.com/wapi/clientlog",
+        "https://music.163.com/wapi/feedback",
+        "https://music.163.com/openapi/clientlog",
+    ] {
+        let url = base.parse().unwrap();
+        for c in store.matches(&url) {
+            let cookie = ncm_api::CookieBuilder::new(c.name(), c.value())
+                .domain("music.163.com")
+                .path(c.path().unwrap_or("/"))
+                .build()
+                .unwrap();
+            jar.set(cookie, &base.parse().unwrap()).unwrap();
+        }
+    }
+    let client = MusicApi::from_cookie_jar(jar, 2);
+
+    for id in [3422762511, 3411982875] {
+        let details = futures_lite::future::block_on(client.songs_detail(&[id])).unwrap();
+        let song = details
+            .iter()
+            .find(|s| s.id == id)
+            .expect("requested song missing");
+        assert!(song.duration > 0);
+        let resource = futures_lite::future::block_on(client.download_resource(id, 192)).unwrap();
+        assert_eq!(resource.expected_duration_ms, song.duration);
+        assert!(!resource.preview, "only a preview is available");
+        let temp = common::TempDir::new();
+        let source = temp.0.join("source");
+        let output = temp.0.join("verified.mp3");
+        let cancelled = AtomicBool::new(false);
+        futures_lite::future::block_on(client.download_to(
+            &resource.url,
+            &source,
+            &cancelled,
+            |_, _| {},
+        ))
+        .unwrap();
+        let audio = netease_cloud_music_gtk4::download::audio::prepare_mp3(
+            &source,
+            &output,
+            song,
+            192,
+            None,
+            &cancelled,
+            |_| {},
+        )
+        .unwrap();
+        netease_cloud_music_gtk4::download::audio::verify_complete(
+            audio.duration_ms,
+            song.duration,
+            false,
+        )
+        .unwrap();
+        assert!(audio.mp3 && audio.constant_bitrate);
+        assert_eq!(
+            (audio.bitrate, audio.sample_rate, audio.channels),
+            (192000, 44100, 2)
+        );
+        println!(
+            "Verified song {id}: {} bytes, {}ms, MP3 CBR 192kbps, 44.1kHz stereo",
+            std::fs::metadata(output).unwrap().len(),
+            audio.duration_ms
+        );
+    }
+}

@@ -627,18 +627,21 @@ impl MusicApi {
         to_mix_detail(&serde_json::from_str(&result)?)
     }
 
+    /// Build the JSON array used by the song-detail request's `c` parameter.
+    pub fn song_detail_ids(ids: &[u64]) -> String {
+        serde_json::Value::Array(
+            ids.iter().map(|id| serde_json::json!({"id": id})).collect(),
+        )
+        .to_string()
+    }
+
     /// 歌曲详情
     /// ids: 歌曲 id 列表
     #[allow(unused)]
     pub async fn songs_detail(&self, ids: &[u64]) -> Result<Vec<SongInfo>> {
         let path = "/weapi/v3/song/detail";
         let mut params = HashMap::new();
-        let c = ids
-            .iter()
-            .map(|i| format!("{{\\\"id\\\":\\\"{}\\\"}}", i))
-            .collect::<Vec<String>>()
-            .join(",");
-        let c = format!("[{}]", c);
+        let c = Self::song_detail_ids(ids);
         params.insert("c", &c[..]);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
