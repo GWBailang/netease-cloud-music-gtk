@@ -33,7 +33,7 @@ gstreamer-pbutils = "~0.25"
 [dependencies.adw]
 package = "libadwaita"
 version = "~0.9"
-features = ["v1_6"]
+features = ["v1_5"]
 
 
 [package.metadata.bundle]
