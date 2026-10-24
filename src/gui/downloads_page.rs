@@ -8,8 +8,9 @@ use adw::prelude::*;
 use gettextrs::gettext;
 use gtk::{gio, glib};
 use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, HashMap, HashSet},
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
@@ -41,6 +42,8 @@ struct Data {
     selected: RefCell<HashSet<String>>,
     retry: RefCell<Vec<Retry>>,
     task_rows: RefCell<HashMap<TaskId, (adw::ActionRow, gtk::ProgressBar, gtk::Button)>>,
+    task_filter: Cell<usize>,
+    directory: RefCell<Option<(LocationId, PathBuf)>>,
 }
 #[derive(Clone)]
 pub struct DownloadsPage {
@@ -62,6 +65,8 @@ impl DownloadsPage {
             selected: RefCell::new(HashSet::new()),
             retry: RefCell::new(vec![]),
             task_rows: RefCell::new(HashMap::new()),
+            task_filter: Cell::new(0),
+            directory: RefCell::new(None),
         });
         let page = Self {
             widget,
@@ -69,6 +74,42 @@ impl DownloadsPage {
             data,
         };
         page.refresh();
+        for (index, name) in [
+            "tasks_all",
+            "tasks_complete",
+            "tasks_failed",
+            "tasks_active",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let weak = page.widget.downgrade();
+            let shared = page.data.clone();
+            page.object::<gtk::ToggleButton>(name)
+                .connect_toggled(move |button| {
+                    if button.is_active() {
+                        shared.task_filter.set(index);
+                        if let Some(root) = weak.upgrade() {
+                            filter_tasks(&root, &shared);
+                        }
+                    }
+                });
+        }
+        let weak = page.widget.downgrade();
+        let shared = page.data.clone();
+        page.object::<gtk::Button>("folder_up")
+            .connect_clicked(move |_| {
+                let parent = shared.directory.borrow().as_ref().and_then(|(id, path)| {
+                    path.parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(|p| (id.clone(), p.to_owned()))
+                });
+                shared.directory.replace(parent);
+                shared.selected.borrow_mut().clear();
+                if let Some(root) = weak.upgrade() {
+                    render_files(&root, &shared);
+                }
+            });
         let weak = page.widget.downgrade();
         let shared = page.data.clone();
         page.object::<gtk::Button>("clear_history")
@@ -86,6 +127,7 @@ impl DownloadsPage {
         let shared = page.data.clone();
         page.object::<gtk::SearchEntry>("search")
             .connect_search_changed(move |_| {
+                shared.selected.borrow_mut().clear();
                 if let Some(root) = weak.upgrade() {
                     if object::<gtk::Stack>(&root, "views")
                         .visible_child_name()
@@ -100,6 +142,8 @@ impl DownloadsPage {
         let shared = page.data.clone();
         page.object::<gtk::DropDown>("location_filter")
             .connect_selected_notify(move |_| {
+                shared.directory.replace(None);
+                shared.selected.borrow_mut().clear();
                 if let Some(root) = weak.upgrade() {
                     if object::<gtk::Stack>(&root, "views")
                         .visible_child_name()
@@ -190,10 +234,23 @@ impl DownloadsPage {
     pub fn apply_event(&self, event: DownloadEvent) {
         match event {
             DownloadEvent::Task(task) => {
-                if let Some((row, bar, _)) = self.data.task_rows.borrow().get(&task.id) {
-                    row.set_subtitle(&task_description(&task));
-                    bar.set_fraction(task.progress.clamp(0., 1.));
+                if let Some(record) = self
+                    .data
+                    .snapshot
+                    .borrow_mut()
+                    .tasks
+                    .iter_mut()
+                    .find(|t| t.id == task.id)
+                {
+                    *record = task.clone();
                 }
+                if let Some((row, bar, button)) = self.data.task_rows.borrow().get(&task.id) {
+                    row.set_subtitle(&task_description(&task));
+                    row.set_tooltip_text(Some(&task_description(&task)));
+                    bar.set_fraction(task.progress.clamp(0., 1.));
+                    button.set_label(&task_button_label(&task));
+                }
+                filter_tasks(&self.widget, &self.data);
             }
             DownloadEvent::Changed(snapshot) => {
                 *self.data.snapshot.borrow_mut() = snapshot;
@@ -212,32 +269,6 @@ impl DownloadsPage {
             .selected
             .borrow_mut()
             .retain(|key| snapshot.saved.iter().any(|s| &s.key == key));
-        self.object::<gtk::Label>("task_summary")
-            .set_label(&format!(
-                "{}: {} · {}: {} · {}: {}",
-                gettext("Complete"),
-                snapshot
-                    .tasks
-                    .iter()
-                    .filter(|t| t.stage == TaskStage::Complete)
-                    .count(),
-                gettext("Failed"),
-                snapshot
-                    .tasks
-                    .iter()
-                    .filter(|t| t.stage == TaskStage::Failed)
-                    .count(),
-                gettext("Active"),
-                snapshot
-                    .tasks
-                    .iter()
-                    .filter(|t| !t.stage.terminal())
-                    .count()
-            ));
-        self.object::<adw::StatusPage>("tasks_empty")
-            .set_visible(snapshot.tasks.is_empty());
-        self.object::<gtk::ScrolledWindow>("tasks_scroll")
-            .set_visible(!snapshot.tasks.is_empty());
         let filter = self.object::<gtk::DropDown>("location_filter");
         let selected = filter.selected();
         let names: Vec<String> = std::iter::once(gettext("All save locations"))
@@ -339,6 +370,7 @@ impl DownloadsPage {
                 .insert(id, (row, bar, button));
         }
         drop(snapshot);
+        filter_tasks(&self.widget, &self.data);
         if self
             .object::<gtk::Stack>("views")
             .visible_child_name()
@@ -348,6 +380,60 @@ impl DownloadsPage {
             render_files(&self.widget, &self.data);
         }
     }
+}
+fn task_matches(stage: TaskStage, filter: usize) -> bool {
+    match filter {
+        1 => stage == TaskStage::Complete,
+        2 => stage.terminal() && stage != TaskStage::Complete,
+        3 => !stage.terminal(),
+        _ => true,
+    }
+}
+fn filter_tasks(root: &gtk::Box, data: &Data) {
+    let snapshot = data.snapshot.borrow();
+    let rows = data.task_rows.borrow();
+    let mut visible = 0;
+    for task in &snapshot.tasks {
+        let show = task_matches(task.stage, data.task_filter.get());
+        visible += usize::from(show);
+        if let Some((row, _, _)) = rows.get(&task.id) {
+            row.set_visible(show);
+        }
+    }
+    let empty = object::<adw::StatusPage>(root, "tasks_empty");
+    empty.set_visible(visible == 0);
+    empty.set_title(&gettext(if snapshot.tasks.is_empty() {
+        "No downloads yet"
+    } else {
+        "No downloads in this category"
+    }));
+    empty.set_description(Some(&gettext(if snapshot.tasks.is_empty() {
+        "Choose songs from a song list to start downloading"
+    } else {
+        "Choose another category to view downloads"
+    })));
+    object::<gtk::ScrolledWindow>(root, "tasks_scroll").set_visible(visible > 0);
+    object::<gtk::Label>(root, "task_summary").set_label(&format!(
+        "{}: {} · {}: {} · {}: {}",
+        gettext("Complete"),
+        snapshot
+            .tasks
+            .iter()
+            .filter(|t| task_matches(t.stage, 1))
+            .count(),
+        gettext("Failed"),
+        snapshot
+            .tasks
+            .iter()
+            .filter(|t| task_matches(t.stage, 2))
+            .count(),
+        gettext("Active"),
+        snapshot
+            .tasks
+            .iter()
+            .filter(|t| task_matches(t.stage, 3))
+            .count(),
+    ));
 }
 fn find(root: &gtk::Widget, id: &str) -> Option<gtk::Widget> {
     if root.buildable_id().as_deref() == Some(id) || root.widget_name() == id {
@@ -437,6 +523,9 @@ fn visible_items(root: &gtk::Box, data: &Data) -> Vec<SavedSong> {
         .iter()
         .filter(|s| {
             location.is_none_or(|l| l.id == s.location.id)
+                && data.directory.borrow().as_ref().is_none_or(|(id, path)| {
+                    &s.location.id == id && s.files.iter().any(|f| f.relative.starts_with(path))
+                })
                 && format!(
                     "{} {} {} {}",
                     s.files
@@ -455,11 +544,75 @@ fn visible_items(root: &gtk::Box, data: &Data) -> Vec<SavedSong> {
         .collect()
 }
 fn render_files(root: &gtk::Box, data: &Rc<Data>) {
-    let items = visible_items(root, data);
-    object::<adw::StatusPage>(root, "files_empty").set_visible(items.is_empty());
-    object::<gtk::ScrolledWindow>(root, "files_scroll").set_visible(!items.is_empty());
+    let mut items = visible_items(root, data);
+    let directory = data.directory.borrow().clone();
+    let current_path = directory
+        .as_ref()
+        .map(|(_, path)| path.as_path())
+        .unwrap_or(Path::new(""));
+    let searching = !object::<gtk::SearchEntry>(root, "search").text().is_empty();
+    let mut folders = BTreeMap::new();
+    if !searching {
+        items.retain(|saved| {
+            let parent = saved
+                .files
+                .first()
+                .and_then(|file| file.relative.parent())
+                .unwrap_or(Path::new(""));
+            let relative = parent.strip_prefix(current_path).unwrap_or(parent);
+            if let Some(component) = relative.components().next() {
+                let path = current_path.join(component);
+                folders.insert(
+                    (path, saved.location.id.clone()),
+                    saved.location.root.clone(),
+                );
+                false
+            } else {
+                true
+            }
+        });
+    }
+    let empty = items.is_empty() && folders.is_empty();
+    object::<adw::StatusPage>(root, "files_empty").set_visible(empty);
+    object::<gtk::ScrolledWindow>(root, "files_scroll").set_visible(!empty);
+    object::<gtk::Button>(root, "folder_up").set_sensitive(directory.is_some());
+    let path_label = directory
+        .as_ref()
+        .and_then(|(id, path)| {
+            data.snapshot
+                .borrow()
+                .locations
+                .iter()
+                .find(|l| &l.id == id)
+                .map(|l| l.root.join(path).display().to_string())
+        })
+        .unwrap_or_else(|| gettext("Save location"));
+    object::<gtk::Label>(root, "folder_path").set_label(&path_label);
+    object::<gtk::Label>(root, "folder_path").set_tooltip_text(Some(&path_label));
     let list = object::<gtk::ListBox>(root, "files");
     clear(&list);
+    for ((path, location_id), location_root) in folders {
+        let row = adw::ActionRow::builder()
+            .title(path.file_name().unwrap_or_default().to_string_lossy())
+            .subtitle(location_root.join(&path).display().to_string())
+            .activatable(true)
+            .build();
+        row.set_use_markup(false);
+        row.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
+        row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        let weak = root.downgrade();
+        let shared = data.clone();
+        row.connect_activated(move |_| {
+            shared
+                .directory
+                .replace(Some((location_id.clone(), path.clone())));
+            shared.selected.borrow_mut().clear();
+            if let Some(root) = weak.upgrade() {
+                render_files(&root, &shared);
+            }
+        });
+        list.append(&row);
+    }
     for saved in &items {
         let row = adw::ActionRow::builder()
             .title(&saved.title)
@@ -489,7 +642,17 @@ fn render_files(root: &gtk::Box, data: &Rc<Data>) {
                     .collect::<Vec<_>>()
                     .join(" / "),
                 saved.files.iter().map(|f| f.fingerprint.size).sum::<u64>() as f64 / 1e6,
-                saved.location.root.display()
+                saved
+                    .location
+                    .root
+                    .join(
+                        saved
+                            .files
+                            .first()
+                            .and_then(|f| f.relative.parent())
+                            .unwrap_or(Path::new(""))
+                    )
+                    .display()
             ))
             .subtitle_lines(2)
             .build();

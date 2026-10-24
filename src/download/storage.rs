@@ -6,7 +6,7 @@ use std::{
     collections::HashSet,
     ffi::OsString,
     fs::{self, File},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     os::{fd::AsRawFd, unix::fs::MetadataExt},
     path::{Component, Path},
     sync::atomic::{AtomicBool, Ordering},
@@ -140,6 +140,49 @@ pub fn fingerprint(target: &TargetLocation, relative: &Path) -> Result<Fingerpri
     )?
     .into();
     fingerprint_file(file)
+}
+/// Copy a managed source through a no-follow descriptor, verifying both its
+/// identity and the bytes copied before allowing it to become a new output.
+pub fn copy_verified(
+    target: &TargetLocation,
+    stored: &StoredFile,
+    destination: &Path,
+    cancelled: &AtomicBool,
+) -> Result<()> {
+    let (parent, name) = open_parent(target, &stored.relative, false)?;
+    let mut input: File = rfs::openat(
+        &parent,
+        &name,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?
+    .into();
+    ensure!(
+        fingerprint_file(input.try_clone()?)? == stored.fingerprint,
+        "Saved file has changed"
+    );
+    input.rewind()?;
+    let mut output = File::create(destination)?;
+    let mut buf = [0; 65536];
+    loop {
+        ensure!(!cancelled.load(Ordering::Relaxed), "Download cancelled");
+        let n = input.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        output.write_all(&buf[..n])?;
+    }
+    output.sync_all()?;
+    ensure!(
+        fingerprint(target, &stored.relative)? == stored.fingerprint,
+        "Saved file has changed"
+    );
+    let copied = fingerprint_file(File::open(destination)?)?;
+    ensure!(
+        copied.size == stored.fingerprint.size && copied.sha256 == stored.fingerprint.sha256,
+        "Saved file changed while copying"
+    );
+    Ok(())
 }
 pub fn commit_file(
     prepared: &Path,

@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 struct Backend {
+    calls: AtomicUsize,
+    requested: Mutex<Vec<Vec<String>>>,
     fail_lyrics: AtomicBool,
     active: AtomicUsize,
     max_active: AtomicUsize,
@@ -21,6 +23,8 @@ struct Backend {
 impl Backend {
     fn new(delay: u64) -> Arc<Self> {
         Arc::new(Self {
+            calls: AtomicUsize::new(0),
+            requested: Mutex::new(Vec::new()),
             fail_lyrics: AtomicBool::new(false),
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
@@ -40,6 +44,14 @@ impl DownloadBackend for Backend {
         update: &dyn Fn(TaskStage, f64),
         encoder: &Mutex<()>,
     ) -> anyhow::Result<Vec<PreparedOutput>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.requested.lock().unwrap().push(
+            task.outputs
+                .iter()
+                .filter(|o| !matches!(o.state, OutputState::Saved | OutputState::Skipped))
+                .map(|o| o.suffix.clone())
+                .collect(),
+        );
         let count = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_active.fetch_max(count, Ordering::SeqCst);
         update(TaskStage::Downloading, 0.2);
@@ -610,5 +622,150 @@ fn adding_missing_lyrics_is_reported_as_new_work() {
             .state,
         OutputState::Saved
     );
+    manager.shutdown();
+}
+
+#[test]
+fn copies_saved_outputs_between_collection_folders_without_backend_requests() {
+    let backend = Backend::new(0);
+    let (_temp, manager, _, options) = setup(backend.clone());
+    let collection = |id| CollectionSnapshot {
+        id,
+        name: format!("Playlist {id}"),
+        kind: "playlist".into(),
+        items: vec![CollectionItem {
+            song_id: 1,
+            song: Some(common::song(1)),
+            error: None,
+        }],
+        duplicates: 0,
+    };
+    manager
+        .enqueue(
+            vec![common::song(1)],
+            options.clone(),
+            Some(collection(10)),
+            MusicApi::new(2),
+        )
+        .unwrap();
+    wait(&manager);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    manager
+        .enqueue(
+            vec![common::song(1)],
+            options.clone(),
+            Some(collection(20)),
+            MusicApi::new(2),
+        )
+        .unwrap();
+    wait(&manager);
+    let snapshot = manager.snapshot();
+    assert!(
+        snapshot
+            .tasks
+            .iter()
+            .all(|task| task.stage == TaskStage::Complete)
+    );
+    assert_eq!(snapshot.saved.len(), 2);
+    for original in &snapshot.saved[0].files {
+        let copied = snapshot.saved[1]
+            .files
+            .iter()
+            .find(|f| f.kind == original.kind)
+            .unwrap();
+        assert_ne!(original.relative.parent(), copied.relative.parent());
+        assert_eq!(
+            std::fs::read(options.target.root.join(&original.relative)).unwrap(),
+            std::fs::read(options.target.root.join(&copied.relative)).unwrap()
+        );
+        assert_ne!(original.fingerprint.inode, copied.fingerprint.inode);
+    }
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        1,
+        "a local copy must not invoke the network backend"
+    );
+    manager.shutdown();
+}
+
+#[test]
+fn cross_folder_copy_only_fetches_incompatible_outputs() {
+    let backend = Backend::new(0);
+    let (_temp, manager, _, options) = setup(backend.clone());
+    manager
+        .enqueue(
+            vec![common::song(1)],
+            options.clone(),
+            None,
+            MusicApi::new(2),
+        )
+        .unwrap();
+    wait(&manager);
+    let mut bilingual = options.clone();
+    bilingual.lyric_mode = LyricMode::Bilingual;
+    bilingual.numbered = true;
+    manager
+        .enqueue(vec![common::song(1)], bilingual, None, MusicApi::new(2))
+        .unwrap();
+    wait(&manager);
+    assert_eq!(backend.requested.lock().unwrap()[1], vec![".lrc"]);
+    let mut higher_bitrate = options;
+    higher_bitrate.bitrate = 320;
+    manager
+        .enqueue(
+            vec![common::song(1)],
+            higher_bitrate,
+            None,
+            MusicApi::new(2),
+        )
+        .unwrap();
+    wait(&manager);
+    assert_eq!(backend.requested.lock().unwrap()[2], vec![".mp3"]);
+    assert!(
+        manager
+            .snapshot()
+            .tasks
+            .iter()
+            .all(|t| t.stage == TaskStage::Complete)
+    );
+    manager.shutdown();
+}
+
+#[test]
+fn cross_folder_copy_rejects_modified_audio_but_keeps_valid_lyrics() {
+    let backend = Backend::new(0);
+    let (_temp, manager, _, options) = setup(backend.clone());
+    manager
+        .enqueue(
+            vec![common::song(1)],
+            options.clone(),
+            None,
+            MusicApi::new(2),
+        )
+        .unwrap();
+    wait(&manager);
+    let saved = manager.snapshot().saved[0].clone();
+    let audio = saved
+        .files
+        .iter()
+        .find(|f| f.kind == FileKind::Audio)
+        .unwrap();
+    fs::write(
+        saved.location.root.join(&audio.relative),
+        b"externally replaced",
+    )
+    .unwrap();
+    let mut destination = options;
+    destination.numbered = true;
+    manager
+        .enqueue(vec![common::song(1)], destination, None, MusicApi::new(2))
+        .unwrap();
+    wait(&manager);
+    assert_eq!(backend.requested.lock().unwrap()[1], vec![".mp3"]);
+    assert_eq!(
+        fs::read(saved.location.root.join(&audio.relative)).unwrap(),
+        b"externally replaced"
+    );
+    assert_eq!(manager.snapshot().tasks[1].stage, TaskStage::Complete);
     manager.shutdown();
 }

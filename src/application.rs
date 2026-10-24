@@ -164,6 +164,7 @@ pub enum Action {
     // playlist
     ToPlayListLyricsPage(Vec<SongInfo>, SongInfo),
     UpdateLyrics(SongInfo, u64),
+    RefreshLyrics,
     RemoveFromPlayList(SongInfo),
 
     // page routing
@@ -213,6 +214,7 @@ mod imp {
         pub unikey: Arc<RwLock<String>>,
         pub ncmapi: RefCell<Option<NcmClient>>,
         pub quitting: std::cell::Cell<bool>,
+        pub lyrics_request: RefCell<netease_cloud_music_gtk4::playback_lyrics::LyricsRequest>,
         pub downloads: OnceCell<netease_cloud_music_gtk4::download::manager::DownloadManager>,
         pub download_monitor: OnceCell<gio::VolumeMonitor>,
         pub downloads_page:
@@ -238,6 +240,7 @@ mod imp {
                 unikey,
                 ncmapi,
                 quitting: std::cell::Cell::new(false),
+                lyrics_request: RefCell::new(Default::default()),
                 downloads: OnceCell::new(),
                 downloads_page: RefCell::new(None),
                 download_monitor: OnceCell::new(),
@@ -362,6 +365,63 @@ impl NeteaseCloudMusicGtk4Application {
             // do nothing
         }
         ncmapi
+    }
+
+    fn load_playback_lyrics(
+        &self,
+        window: NeteaseCloudMusicGtk4Window,
+        ncmapi: NcmClient,
+        song: SongInfo,
+        time: u64,
+        refresh: bool,
+    ) {
+        let request = self
+            .imp()
+            .lyrics_request
+            .borrow_mut()
+            .begin(song.id, time, refresh);
+        let Some(request) = request else {
+            window.update_lyrics_timestamp(time);
+            return;
+        };
+        window.update_lyrics_text(&gettext("Loading lyrics..."));
+        let app = self.downgrade();
+        MAINCONTEXT.spawn_local_with_priority(Priority::DEFAULT_IDLE, async move {
+            let result = ncmapi
+                .get_lyrics(song.id, refresh, || {
+                    app.upgrade()
+                        .is_some_and(|app| app.imp().lyrics_request.borrow().is_current(request))
+                        && window
+                            .current_song()
+                            .is_some_and(|current| current.id == song.id)
+                })
+                .await;
+            let Some(app) = app.upgrade() else {
+                return;
+            };
+            if !app.imp().lyrics_request.borrow().is_current(request)
+                || !window
+                    .current_song()
+                    .is_some_and(|current| current.id == song.id)
+            {
+                return;
+            }
+            match result {
+                Ok(lines) if lines.is_empty() => {
+                    window.update_lyrics_text(&gettext("No lyrics available"))
+                }
+                Ok(lines) => {
+                    window.update_lyrics(lines);
+                    window.update_lyrics_timestamp(app.imp().lyrics_request.borrow().position());
+                }
+                Err(error) => {
+                    log::warn!("Unable to fetch lyrics for {}: {}", song.id, error);
+                    window.update_lyrics_text(&gettext(
+                        "Unable to load lyrics. Use Refresh lyrics to try again.",
+                    ));
+                }
+            }
+        });
     }
 
     fn process_action(&self, action: Action) -> glib::ControlFlow {
@@ -1020,13 +1080,6 @@ impl NeteaseCloudMusicGtk4Application {
                 }
             }
             Action::PlayStart(song_info) => {
-                // 启用桌面歌词
-                if window.settings().boolean("desktop-lyrics") {
-                    let sender = imp.sender.clone();
-                    sender
-                        .send_blocking(Action::UpdateLyrics(song_info.to_owned(), 0))
-                        .unwrap();
-                };
                 debug!("播放歌曲: {:?}", song_info);
 
                 let sender = imp.sender.clone();
@@ -1041,7 +1094,8 @@ impl NeteaseCloudMusicGtk4Application {
                     .send_blocking(Action::UpdateTrayPlaying(true))
                     .unwrap();
 
-                window.play(song_info);
+                window.play(song_info.clone());
+                self.load_playback_lyrics(window, ncmapi, song_info, 0, false);
             }
             Action::ToSongListPage(songlist) => {
                 let page = window.init_songlist_page(&songlist, false);
@@ -1656,21 +1710,15 @@ impl NeteaseCloudMusicGtk4Application {
                 }
             }
             Action::UpdateLyrics(si, time) => {
-                MAINCONTEXT.spawn_local_with_priority(Priority::DEFAULT_IDLE, async move {
-                    if time == 0 {
-                        // 当新曲目播放时，写入歌词内容
-                        window.update_lyrics_text(&gettext("Loading lyrics..."));
-                        match ncmapi.get_lyrics(si).await {
-                            Ok(lrc) => {
-                                debug!("获取歌词：{:?}", lrc);
-                                window.update_lyrics(lrc);
-                            }
-                            Err(e) => debug!("{}", e),
-                        }
-                    }
-                    // 更新歌词高亮位置
-                    window.update_lyrics_timestamp(time);
-                });
+                if window.current_song().is_some_and(|song| song.id == si.id) {
+                    self.load_playback_lyrics(window, ncmapi, si, time, false);
+                }
+            }
+            Action::RefreshLyrics => {
+                if let Some(song) = window.current_song() {
+                    let position = imp.lyrics_request.borrow().position();
+                    self.load_playback_lyrics(window, ncmapi, song, position, true);
+                }
             }
             Action::RemoveFromPlayList(song_info) => {
                 MAINCONTEXT.spawn_local_with_priority(Priority::DEFAULT_IDLE, async move {

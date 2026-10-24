@@ -196,7 +196,12 @@ impl DownloadBackend for ServiceBackend {
             });
         }
         ensure!(!cancelled.load(Ordering::Relaxed), "Download cancelled");
-        if task.options.content.lyrics() {
+        if task.options.content.lyrics()
+            && task
+                .outputs
+                .iter()
+                .any(|o| o.suffix != ".mp3" && pending(&o.suffix))
+        {
             update(TaskStage::Fetching, 0.0);
             let lyrics = self.service.lyrics(client, song.id);
             for format in &task.options.lyric_formats {
@@ -259,4 +264,38 @@ impl DownloadBackend for ServiceBackend {
         }
         Ok(outputs)
     }
+}
+
+/// Retag the private copy when its destination has a different track order.
+/// Audio frames are preserved, and the original saved file is never changed.
+pub(super) fn update_copy_tags(path: &Path, task: &TaskRecord) -> Result<()> {
+    use id3::TagLike;
+    let ordinal = if task.options.numbered {
+        task.basename
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.split(' ').next())
+            .and_then(|s| s.parse::<u32>().ok())
+    } else {
+        None
+    };
+    let mut tag = match id3::Tag::read_from_path(path) {
+        Ok(tag) => tag,
+        Err(error) if matches!(error.kind, id3::ErrorKind::NoTag) => id3::Tag::new(),
+        Err(error) => return Err(error.into()),
+    };
+    if tag.track() != ordinal {
+        if let Some(song) = &task.song {
+            tag.set_title(&song.name);
+            tag.set_artist(&song.singer);
+            tag.set_album(&song.album);
+        }
+        tag.remove_track();
+        tag.remove_total_tracks();
+        if let Some(ordinal) = ordinal {
+            tag.set_track(ordinal);
+        }
+        tag.write_to_path(path, id3::Version::Id3v23)?;
+    }
+    Ok(())
 }

@@ -959,14 +959,100 @@ impl Core {
                         state.catalog.save(&self.catalog_path)?;
                     }
 
-                    let outputs = self.backend.run(
-                        &task,
-                        &client,
-                        &temp,
-                        &cancel,
-                        &|stage, p| self.update(id, stage, p),
-                        &self.encoder,
-                    )?;
+                    // Resolve reusable outputs at execution time, so completed jobs
+                    // in this queue can also supply copies for later jobs.
+                    let candidates = {
+                        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                        state
+                            .catalog
+                            .saved
+                            .iter()
+                            .filter(|saved| {
+                                !state.invalid.contains(&saved.location.id)
+                                    && saved
+                                        .song
+                                        .as_ref()
+                                        .is_some_and(|song| song.id == task.song_id)
+                                    && !saved.imported
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    };
+                    let mut remaining = task.clone();
+                    let mut outputs = Vec::new();
+                    for output in &mut remaining.outputs {
+                        if matches!(output.state, OutputState::Saved | OutputState::Skipped) {
+                            continue;
+                        }
+                        'sources: for saved in &candidates {
+                            for file in &saved.files {
+                                let compatible = match file.kind {
+                                    FileKind::Audio => saved.bitrate == task.options.bitrate,
+                                    FileKind::Lyrics => {
+                                        saved.lyric_mode == task.options.lyric_mode
+                                            && file.encoding == Some(task.options.encoding)
+                                    }
+                                };
+                                if !compatible
+                                    || relative_output(
+                                        &output_basename(&file.relative),
+                                        &output.suffix,
+                                    ) != file.relative
+                                {
+                                    continue;
+                                }
+                                let path = temp.join(format!("reused{}", output.suffix));
+                                self.update(id, TaskStage::Saving, 0.0);
+                                let result =
+                                    storage::copy_verified(&saved.location, file, &path, &cancel)
+                                        .and_then(|_| {
+                                            if file.kind == FileKind::Audio {
+                                                update_copy_tags(&path, &task)?;
+                                            }
+                                            Ok(())
+                                        });
+                                if result.is_ok() {
+                                    let mut prepared = PreparedOutput::ready(&output.suffix, path);
+                                    prepared.source_info =
+                                        Some(gettextrs::gettext("Copied from saved files"));
+                                    outputs.push(prepared);
+                                    // Only this backend request sees the output as satisfied.
+                                    // The real task is saved and indexed after the commit below.
+                                    output.state = OutputState::Skipped;
+                                    break 'sources;
+                                }
+                                let _ = fs::remove_file(path);
+                            }
+                        }
+                    }
+                    if remaining
+                        .outputs
+                        .iter()
+                        .any(|o| !matches!(o.state, OutputState::Saved | OutputState::Skipped))
+                    {
+                        match self.backend.run(
+                            &remaining,
+                            &client,
+                            &temp,
+                            &cancel,
+                            &|stage, p| self.update(id, stage, p),
+                            &self.encoder,
+                        ) {
+                            Ok(prepared) => outputs.extend(prepared),
+                            Err(error) => outputs.extend(
+                                remaining
+                                    .outputs
+                                    .iter()
+                                    .filter(|o| {
+                                        !matches!(
+                                            o.state,
+                                            OutputState::Saved | OutputState::Skipped
+                                        )
+                                    })
+                                    .map(|o| PreparedOutput::failed(&o.suffix, &error.to_string())),
+                            ),
+                        }
+                    }
                     for prepared in outputs {
                         if cancel.load(Ordering::Relaxed) {
                             break;

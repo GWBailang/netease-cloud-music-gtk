@@ -9,20 +9,36 @@ use std::{
     io::{Read, Write},
     net::TcpListener,
     path::Path,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 struct Sources {
     base: String,
+    audio_requests: AtomicUsize,
+    lyric_requests: AtomicUsize,
+}
+impl Sources {
+    fn new(base: String) -> Self {
+        Self {
+            base,
+            audio_requests: AtomicUsize::new(0),
+            lyric_requests: AtomicUsize::new(0),
+        }
+    }
 }
 impl DownloadService for Sources {
     fn resource(&self, _: &MusicApi, id: u64, _: u32) -> anyhow::Result<DownloadResource> {
+        self.audio_requests.fetch_add(1, Ordering::SeqCst);
         DownloadResource::parse(
             &serde_json::json!({"id":id,"url":format!("{}/{}",self.base,id),"type":if id==1{"aac"}else{"flac"},"br":192000,"freeTrialInfo":null}),
             4644,
         )
     }
     fn lyrics(&self, _: &MusicApi, id: u64) -> anyhow::Result<LyricDocument> {
+        self.lyric_requests.fetch_add(1, Ordering::SeqCst);
         Ok(if id == 1 {
             LyricDocument::parse(
                 &["[00:01.00]原文🎵".into()],
@@ -70,7 +86,7 @@ fn batch_streams_converts_exports_and_deletes_without_affecting_other_copies() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
-        for stream in listener.incoming().take(3) {
+        for stream in listener.incoming().take(2) {
             let mut stream = stream.unwrap();
             let mut request = [0; 4096];
             let size = stream.read(&mut request).unwrap();
@@ -95,7 +111,8 @@ fn batch_streams_converts_exports_and_deletes_without_affecting_other_copies() {
     });
     let mut client = MusicApi::new(2);
     client.set_proxy(&base).unwrap();
-    let backend = Arc::new(ServiceBackend::new(Arc::new(Sources { base })));
+    let service = Arc::new(Sources::new(base));
+    let backend = Arc::new(ServiceBackend::new(service.clone()));
     let (manager, _) =
         DownloadManager::new_with_backend(temp.0.join("catalog"), temp.0.join("cache"), backend)
             .unwrap();
@@ -187,12 +204,48 @@ fn batch_streams_converts_exports_and_deletes_without_affecting_other_copies() {
     let copy_root = temp.0.join("other-copy");
     fs::create_dir(&copy_root).unwrap();
     let mut copy_options = options;
+    copy_options.numbered = false;
     copy_options.target = TargetLocation::capture(&copy_root, false, None, None).unwrap();
     manager
         .enqueue(vec![songs[0].clone()], copy_options, None, client)
         .unwrap();
     wait(&manager);
     server.join().unwrap();
+    assert_eq!(service.audio_requests.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        service.lyric_requests.load(Ordering::SeqCst),
+        2,
+        "fully copied lyrics must not be fetched again"
+    );
+    let copied = manager
+        .snapshot()
+        .saved
+        .into_iter()
+        .find(|s| s.location.root == copy_root)
+        .unwrap();
+    assert_eq!(copied.files.len(), 4);
+    let copied_mp3 = copied
+        .files
+        .iter()
+        .find(|f| f.kind == FileKind::Audio)
+        .unwrap();
+    use id3::TagLike;
+    assert_eq!(
+        id3::Tag::read_from_path(root.join(&mp3.relative))
+            .unwrap()
+            .track(),
+        Some(1)
+    );
+    assert_eq!(
+        id3::Tag::read_from_path(copy_root.join(&copied_mp3.relative))
+            .unwrap()
+            .track(),
+        None
+    );
+    let copied_audio = audio::probe(&copy_root.join(&copied_mp3.relative)).unwrap();
+    assert!(copied_audio.mp3 && copied_audio.constant_bitrate);
+    assert_eq!(copied_audio.bitrate, 192000);
+
     let preview = storage::preview_delete(&[first.clone()], true, true).unwrap();
     let report = manager
         .delete_files(&preview, DeleteMode::Permanent)
@@ -214,9 +267,7 @@ fn gbk_failed_lyrics_can_retry_as_utf8() {
         let temp = common::TempDir::new();
         let root = temp.0.join("lyrics");
         fs::create_dir(&root).unwrap();
-        let backend = Arc::new(ServiceBackend::new(Arc::new(Sources {
-            base: String::new(),
-        })));
+        let backend = Arc::new(ServiceBackend::new(Arc::new(Sources::new(String::new()))));
         let (manager, _) = DownloadManager::new_with_backend(
             temp.0.join("catalog"),
             temp.0.join("cache"),
@@ -272,9 +323,7 @@ fn independent_translation_survives_original_encoding_failure() {
     let temp = common::TempDir::new();
     let root = temp.0.join("lyrics");
     fs::create_dir(&root).unwrap();
-    let backend = Arc::new(ServiceBackend::new(Arc::new(Sources {
-        base: String::new(),
-    })));
+    let backend = Arc::new(ServiceBackend::new(Arc::new(Sources::new(String::new()))));
     let (manager, _) =
         DownloadManager::new_with_backend(temp.0.join("catalog"), temp.0.join("cache"), backend)
             .unwrap();

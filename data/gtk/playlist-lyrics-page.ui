@@ -25,7 +25,18 @@
                         <property name="maximum-size">1000</property>
                         <property name="tightening-threshold">730</property>
                         <child>
+                            <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">6</property>
+                                <child><object class="GtkButton" id="refresh_lyrics">
+                                    <property name="icon-name">view-refresh-symbolic</property>
+                                    <property name="tooltip-text" translatable="yes">Refresh lyrics</property>
+                                    <property name="halign">end</property>
+                                    <style><class name="flat"/></style>
+                                </object></child>
+                                <child>
                             <object class="GtkScrolledWindow" id="scroll_lyrics_win">
+                                <property name="vexpand">true</property>
                                 <property name="width-request">500</property>
                                 <property name="hscrollbar-policy">never</property>
                                 <child>
@@ -64,6 +75,8 @@
                                             </object>
                                         </property>
                                     </object>
+                                </child>
+                            </object>
                                 </child>
                             </object>
                         </child>

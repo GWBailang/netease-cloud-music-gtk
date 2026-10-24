@@ -5,7 +5,7 @@
 //
 use adw::subclass::prelude::BinImpl;
 use async_channel::Sender;
-use glib::{ParamSpec, Value, closure_local};
+use glib::{ParamSpec, Value};
 use gtk::{CompositeTemplate, glib, prelude::*, subclass::prelude::*, *};
 use log::warn;
 use ncm_api::SongInfo;
@@ -14,10 +14,7 @@ use once_cell::sync::OnceCell;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use crate::{
-    application::Action,
-    gui::{songlist_row::SonglistRow, songlist_view::SongListView},
-};
+use crate::{application::Action, gui::songlist_view::SongListView};
 
 glib::wrapper! {
     pub struct PlayListLyricsPage(ObjectSubclass<imp::PlayListLyricsPage>)
@@ -34,19 +31,18 @@ impl PlayListLyricsPage {
         let sender = sender_.clone();
         self.imp().sender.set(sender).unwrap();
 
-        let sender = sender_;
-        self.imp()
-            .songs_list
-            .get()
-            .connect_row_activated(closure_local!(move |_: SongListView, row: SonglistRow| {
-                if let Some(si) = row.get_song_info() {
-                    sender.send_blocking(Action::UpdateLyrics(si, 0)).unwrap();
-                }
-            }));
+        self.imp().refresh_lyrics.connect_clicked(move |_| {
+            let _ = sender_.send_blocking(Action::RefreshLyrics);
+        });
     }
 
     pub fn init_page(&self, sis: &[SongInfo], si: SongInfo, likes: &[bool]) {
         let imp = self.imp();
+        let _ = imp
+            .sender
+            .get()
+            .unwrap()
+            .send_blocking(Action::UpdateLyrics(si.clone(), 0));
         // 删除旧内容
         let songs_list = imp.songs_list.get();
         songs_list.clear_list();
@@ -104,6 +100,7 @@ impl PlayListLyricsPage {
     }
 
     pub fn update_lyrics_text(&self, text: &str) {
+        self.imp().current_lyrics.write().unwrap().clear();
         let buffer = self.imp().buffer.get();
         buffer.set_text(text);
     }
@@ -203,6 +200,8 @@ mod imp {
         pub songs_list: TemplateChild<SongListView>,
         #[template_child]
         pub scroll_lyrics_win: TemplateChild<ScrolledWindow>,
+        #[template_child]
+        pub refresh_lyrics: TemplateChild<Button>,
         #[template_child]
         pub lyrics_text_view: TemplateChild<TextView>,
         #[template_child]

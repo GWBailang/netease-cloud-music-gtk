@@ -172,6 +172,12 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     screenshot(&window, "delete-preview");
     confirmation.close();
     spin(300);
+    for _ in 0..3 {
+        if let Some(dialog) = window.visible_dialog() {
+            dialog.close();
+            spin(300);
+        }
+    }
     screenshot(&window, "downloads-light");
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
     window.set_default_size(540, 560);
@@ -183,6 +189,55 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     screenshot(&window, "download-dialog-dark-small");
     visual.dialog.close();
     spin(200);
+    // Mixed folders and root songs remain separately browsable at every level.
+    std::fs::create_dir_all(target_path.join("Album/Nested")).unwrap();
+    std::fs::write(target_path.join("Album/Inside.mp3"), b"inside").unwrap();
+    std::fs::write(target_path.join("Album/Nested/Deep.mp3"), b"deep").unwrap();
+    let target = TargetLocation::capture(&target_path, false, None, None).unwrap();
+    manager
+        .import_files(
+            target.clone(),
+            netease_cloud_music_gtk4::download::storage::scan(&target).unwrap(),
+        )
+        .unwrap();
+    page.apply_event(DownloadEvent::Changed(manager.snapshot()));
+    let list = page.object::<gtk::ListBox>("files");
+    assert_eq!(
+        list.observe_children().n_items(),
+        2,
+        "show one folder and one root song"
+    );
+    let folder = list
+        .first_child()
+        .unwrap()
+        .downcast::<adw::ActionRow>()
+        .unwrap();
+    assert_eq!(folder.title(), "Album");
+    folder.emit_by_name::<()>("activated", &[]);
+    assert_eq!(
+        list.observe_children().n_items(),
+        2,
+        "show a subfolder alongside a song"
+    );
+    assert!(labels(list.clone().upcast()).contains("Inside"));
+    assert!(!labels(list.clone().upcast()).contains("Example"));
+    list.first_child()
+        .unwrap()
+        .downcast::<adw::ActionRow>()
+        .unwrap()
+        .emit_by_name::<()>("activated", &[]);
+    assert_eq!(list.observe_children().n_items(), 1);
+    assert!(labels(list.clone().upcast()).contains("Deep"));
+    page.object::<gtk::Button>("folder_up").emit_clicked();
+    page.object::<gtk::Button>("folder_up").emit_clicked();
+    assert_eq!(list.observe_children().n_items(), 2);
+    page.object::<gtk::SearchEntry>("search").set_text("Deep");
+    spin(250);
+    assert_eq!(list.observe_children().n_items(), 1);
+    assert!(labels(list.clone().upcast()).contains("Deep"));
+    page.object::<gtk::SearchEntry>("search").set_text("");
+    spin(250);
+    screenshot(&window, "downloads-folders");
     let locale_dir = temp.0.join("locale");
     let messages = locale_dir.join("zh_CN/LC_MESSAGES");
     std::fs::create_dir_all(&messages).unwrap();
@@ -233,7 +288,8 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
     spin(300);
     screenshot(&window, "download-dialog-zh");
     chinese.dialog.close();
-    window.close();
+    page.object::<gtk::Stack>("views")
+        .set_visible_child_name("tasks");
     let target = TargetLocation::capture(&target_path, false, None, None).unwrap();
     let mut queue_prefs = DownloadPreferences::default();
     queue_prefs.content = DownloadContent::Lyrics;
@@ -263,6 +319,71 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
             .unwrap(),
         task_row
     );
+    let mut snapshot = manager.snapshot();
+    let template = snapshot.tasks[0].clone();
+    snapshot.tasks = [
+        TaskStage::Complete,
+        TaskStage::Failed,
+        TaskStage::Waiting,
+        TaskStage::Interrupted,
+        TaskStage::Cancelled,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, stage)| {
+        let mut task = template.clone();
+        task.id = 100 + i as u64;
+        task.stage = stage;
+        task
+    })
+    .collect();
+    page.apply_event(DownloadEvent::Changed(snapshot.clone()));
+    let visible_tasks = || {
+        let list = page.object::<gtk::ListBox>("tasks");
+        let mut child = list.first_child();
+        let mut count = 0;
+        while let Some(row) = child {
+            count += usize::from(row.is_visible());
+            child = row.next_sibling();
+        }
+        count
+    };
+    page.object::<gtk::ToggleButton>("tasks_complete")
+        .set_active(true);
+    assert_eq!(visible_tasks(), 1);
+    page.object::<gtk::ToggleButton>("tasks_failed")
+        .set_active(true);
+    assert_eq!(visible_tasks(), 3);
+    page.object::<gtk::ToggleButton>("tasks_active")
+        .set_active(true);
+    assert_eq!(visible_tasks(), 1);
+    let mut finished = snapshot.tasks[2].clone();
+    finished.stage = TaskStage::Complete;
+    page.apply_event(DownloadEvent::Task(finished));
+    assert_eq!(
+        visible_tasks(),
+        0,
+        "terminal event leaves active category immediately"
+    );
+    assert!(page.object::<adw::StatusPage>("tasks_empty").is_visible());
+    page.object::<gtk::ToggleButton>("tasks_all")
+        .set_active(true);
+    assert_eq!(visible_tasks(), 5);
+    let chinese_page =
+        netease_cloud_music_gtk4::downloads_page::DownloadsPage::new(manager.clone());
+    chinese_page.apply_event(DownloadEvent::Changed(snapshot));
+    window.set_content(Some(&chinese_page.widget));
+    chinese_page
+        .object::<gtk::ToggleButton>("tasks_failed")
+        .set_active(true);
+    spin(300);
+    screenshot(&window, "downloads-categories-zh");
+    chinese_page
+        .object::<gtk::Stack>("views")
+        .set_visible_child_name("saved");
+    spin(300);
+    screenshot(&window, "downloads-folders-zh");
+    page.apply_event(DownloadEvent::Changed(manager.snapshot()));
     manager
         .enqueue(
             vec![common::song(78)],
@@ -272,6 +393,8 @@ fn native_dialog_defaults_selection_and_saved_preferences() {
         )
         .unwrap();
     window.set_content(None::<&gtk::Widget>);
+    window.close();
+    drop(chinese_page);
     drop(page);
     spin(300);
     assert!(

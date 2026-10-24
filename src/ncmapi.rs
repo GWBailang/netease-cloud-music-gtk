@@ -5,10 +5,10 @@
 //
 use anyhow::Result;
 use cookie_store::{CookieStore, serde};
-use ncm_api::{CookieBuilder, CookieJar, MusicApi, SongInfo, SongQuality, SongUrl};
+use ncm_api::{CookieBuilder, CookieJar, MusicApi, SongQuality, SongUrl};
 
 use crate::path::{CACHE, LYRICS};
-use log::{debug, error};
+use log::error;
 use std::{fs, io, path::PathBuf};
 
 const COOKIE_FILE: &str = "cookies.json";
@@ -194,110 +194,23 @@ impl NcmClient {
         self.client.songs_url_v1(ids, Self::get_quality(rate)).await
     }
 
-    pub async fn get_lyrics(&self, si: SongInfo) -> Result<Vec<(u64, String)>> {
-        // 歌词文件位置
-        let mut lyric_path = LYRICS.clone();
-        lyric_path.push(format!(
-            "{}-{}-{}.lrc",
-            si.name.replace('/', "／"),
-            si.singer,
-            si.album
-        ));
-        // 翻译歌词文件位置
-        let mut tlyric_path = LYRICS.clone();
-        tlyric_path.push(format!("{}.tlrc", si.id));
-        // 替换歌词时间
-        let re = regex::Regex::new(r"\[\d+:\d+.\d+\]").unwrap();
-        // 修正不正常的时间戳 [00:11:22]
-        let re_abnormal_ts = regex::Regex::new(r"^\[(\d+):(\d+):(\d+)\]").unwrap();
-        if !lyric_path.exists() {
-            if let Ok(lyr) = self.client.song_lyric(si.id).await {
-                debug!("歌词: {:?}", lyr);
-                // 添加歌词翻译
-                let mut lt = Vec::new();
-                for l in lyr.lyric.iter() {
-                    let mut time = 0;
-                    if l.len() >= 10 && re.is_match(l) {
-                        time = (l[1..3].parse::<u64>().unwrap() * 60
-                            + l[4..6].parse::<u64>().unwrap())
-                            * 1000
-                            + l[7..9].parse::<u64>().unwrap_or(0) * 10;
-                        let mut nl = re.replace_all(l, "").to_string();
-                        nl.push('\n');
-                        lt.push((time, nl));
-                    }
-                    for t in lyr.tlyric.iter() {
-                        if t.len() >= 10 && l.len() >= 10 && t.starts_with(&l[0..10]) {
-                            let mut nt = re.replace_all(t, "").to_string();
-                            nt.push('\n');
-                            lt.push((time, nt));
-                        }
-                    }
-                }
-                // 保存歌词文件
-                let lyric = lyr
-                    .lyric
-                    .into_iter()
-                    .map(|x| re_abnormal_ts.replace_all(&x, "[$1:$2.$3]").to_string())
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                fs::write(&lyric_path, lyric)?;
-                if !lyr.tlyric.is_empty() {
-                    // 保存翻译歌词文件
-                    let tlyric = lyr
-                        .tlyric
-                        .into_iter()
-                        .map(|x| re_abnormal_ts.replace_all(&x, "[$1:$2.$3]").to_string())
-                        .collect::<Vec<String>>()
-                        .join("\n");
-                    fs::write(&tlyric_path, tlyric)?;
-                }
-                // 组织歌词+翻译
-                Ok(lt)
-            } else {
-                anyhow::bail!("No lyrics found!")
-            }
-        } else {
-            let lyric = fs::read_to_string(&lyric_path)?;
-            let lyrics: Vec<String> = lyric
-                .split('\n')
-                .collect::<Vec<&str>>()
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-            let mut tlyrics = vec![];
-            if tlyric_path.exists() {
-                let tlyric = fs::read_to_string(&tlyric_path)?;
-                tlyrics = tlyric
-                    .split('\n')
-                    .collect::<Vec<&str>>()
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-            }
-            // 添加歌词翻译
-            let mut lt = Vec::new();
-            for l in lyrics.iter() {
-                let mut time = 0;
-                if l.len() >= 10 && re.is_match(l) {
-                    time = (l[1..3].parse::<u64>().unwrap() * 60 + l[4..6].parse::<u64>().unwrap())
-                        * 1000
-                        + l[7..9].parse::<u64>().unwrap_or(0) * 10;
-                    let mut nl = re.replace_all(l, "").to_string();
-                    nl.push('\n');
-                    lt.push((time, nl));
-                }
-                for t in tlyrics.iter() {
-                    if t.len() >= 10 && l.len() >= 10 && t.starts_with(&l[0..10]) {
-                        let mut nt = re.replace_all(t, "").to_string();
-                        nt.push('\n');
-                        lt.push((time, nt));
-                    }
-                }
-            }
-            // 组织歌词+翻译
-            Ok(lt)
-        }
+    pub async fn get_lyrics(
+        &self,
+        song_id: u64,
+        refresh: bool,
+        is_current: impl Fn() -> bool,
+    ) -> Result<Vec<(u64, String)>> {
+        netease_cloud_music_gtk4::playback_lyrics::load(
+            &LYRICS,
+            song_id,
+            refresh,
+            async {
+                let lyrics = self.client.song_lyric(song_id).await?;
+                Ok((lyrics.lyric, lyrics.tlyric))
+            },
+            is_current,
+        )
+        .await
     }
 }
 

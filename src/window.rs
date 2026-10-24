@@ -262,6 +262,10 @@ impl NeteaseCloudMusicGtk4Window {
         self.imp().settings.get().expect("Could not get settings.")
     }
 
+    pub fn current_song(&self) -> Option<SongInfo> {
+        self.imp().player_controls.get().get_current_song()
+    }
+
     pub fn current_song_id(&self) -> u64 {
         self.imp().current_song_id.get()
     }

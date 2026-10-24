@@ -3,7 +3,7 @@ use crate::{
     gui::{SongListView, SonglistRow},
 };
 use adw::prelude::*;
-use gtk::gio;
+use gtk::{gio, subclass::prelude::ObjectSubclassIsExt};
 #[test]
 fn downloads_and_selection_keep_playback_separate() {
     adw::init().unwrap();
@@ -92,5 +92,31 @@ fn downloads_and_selection_keep_playback_separate() {
         window.is_visible(),
         "close must wait for asynchronous download shutdown"
     );
+    let lyrics = crate::gui::PlayListLyricsPage::new();
+    let (sender, receiver) = async_channel::unbounded();
+    lyrics.set_sender(sender);
+    lyrics.update_lyrics(vec![(1000, "old line\n".into())]);
+    lyrics.update_lyrics_text("Loading lyrics...");
+    assert!(lyrics.imp().current_lyrics.read().unwrap().is_empty());
+    lyrics.imp().refresh_lyrics.emit_clicked();
+    assert!(matches!(receiver.try_recv(), Ok(Action::RefreshLyrics)));
+    window.set_content(Some(&lyrics));
+    window.set_default_size(1150, 600);
+    window.present();
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    while std::time::Instant::now() < until {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let paintable = gtk::WidgetPaintable::new(Some(&window));
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+    let node = snapshot.to_node().unwrap();
+    let texture = window.renderer().unwrap().render_texture(&node, None);
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/download-ui");
+    std::fs::create_dir_all(&dir).unwrap();
+    texture.save_to_png(dir.join("lyrics-refresh.png")).unwrap();
     window.destroy();
 }

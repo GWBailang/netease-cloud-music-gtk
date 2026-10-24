@@ -22,6 +22,7 @@ run_command(
 
 rust_sources = files(
   'lib.rs',
+  'playback_lyrics.rs',
   'download/mod.rs',
   'download/model.rs',
   'download/naming.rs',

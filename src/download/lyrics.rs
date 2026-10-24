@@ -69,6 +69,25 @@ impl LyricDocument {
     pub fn has_translation(&self) -> bool {
         !self.translated.text.is_empty()
     }
+    /// Playback uses the same tolerant timestamp parser as lyric export.
+    pub fn playback_lines(&self) -> Vec<(u64, String)> {
+        let mut lines = self.original.events.clone();
+        lines.extend(self.translated.events.clone());
+        lines.sort_by_key(|(time, _)| *time);
+        if lines.is_empty() {
+            lines = self
+                .original
+                .text
+                .iter()
+                .chain(&self.translated.text)
+                .map(|text| (0, text.clone()))
+                .collect();
+        }
+        lines
+            .into_iter()
+            .map(|(time, text)| (time, format!("{text}\n")))
+            .collect()
+    }
     pub fn render(
         &self,
         format: LyricFormat,

@@ -20,6 +20,7 @@ data/gtk/download-dialog.ui
 data/gtk/downloads-page.ui
 data/gtk/songlist-view.ui
 src/application.rs
+src/download/manager.rs
 src/gui/download_dialog.rs
 src/gui/downloads_page.rs
 src/gui/songlist_row.rs

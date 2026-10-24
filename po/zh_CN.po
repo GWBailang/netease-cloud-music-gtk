@@ -1013,3 +1013,30 @@ msgstr "已在下载队列中"
 #: src/gui/downloads_page.rs
 msgid "Unavailable songs"
 msgstr "无法获取的歌曲"
+
+msgid "All"
+msgstr "所有"
+
+msgid "No downloads in this category"
+msgstr "此分类暂无下载任务"
+
+msgid "Choose another category to view downloads"
+msgstr "选择其他分类查看下载任务"
+
+msgid "Parent folder"
+msgstr "上一级目录"
+
+msgid "Copied from saved files"
+msgstr "从已保存文件复制"
+
+msgid "Refresh lyrics"
+msgstr "刷新歌词"
+
+msgid "Unable to load lyrics. Use Refresh lyrics to try again."
+msgstr "歌词加载失败，请点击“刷新歌词”重新获取。"
+
+msgid "Saved file has changed"
+msgstr "已保存文件已被修改"
+
+msgid "Saved file changed while copying"
+msgstr "复制期间源文件发生变化"
